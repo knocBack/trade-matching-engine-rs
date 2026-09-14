@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Benchmark + profiling output
+/bench-results/
+*.svg.tmp
+perf.data*
+flamegraph.svg
+
+# Local environment
+.env
+.env.local
+*.local.yaml
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local learning dashboard runtime state (the .md/.html sources ARE tracked)
+/learning/.runtime/
