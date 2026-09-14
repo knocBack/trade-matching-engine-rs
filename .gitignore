@@ -22,3 +22,6 @@ flamegraph.svg
 
 # Local learning dashboard runtime state (the .md/.html sources ARE tracked)
 /learning/.runtime/
+
+# Lavish review surfaces (session-local)
+/.lavish/
