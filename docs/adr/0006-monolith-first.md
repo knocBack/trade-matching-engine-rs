@@ -1,6 +1,6 @@
 # 0006. One process before any cluster
 
-**Status:** Accepted · **Date:** 2026-09-14 · **Milestone:** M0–M7
+**Status:** Accepted · **Date:** 2026-09-14 · **Milestone:** M0-M7
 
 ## Context
 
@@ -9,7 +9,7 @@ and a database pooler. The captain's instruction is explicit: incremental steps,
 leaps; a simple Postgres pod is enough at the start; basic proof of concept first.
 
 The Go reference is instructive here. It put Kafka, Zookeeper, Redis, and PostgreSQL
-around the engine — four moving parts — and its single biggest performance win had
+around the engine - four moving parts - and its single biggest performance win had
 nothing to do with the matching code. Kafka defaulted to one partition, funnelling ten
 instruments through one log. Fixing that one setting took throughput from 12,286 to
 18,210 req/s. The engine was never the bottleneck; the infrastructure around it was,
@@ -17,12 +17,12 @@ and it took extensive debugging to see that.
 
 ## Options considered
 
-### Option A — Build the target architecture now
+### Option A - Build the target architecture now
 Cluster, pooler, load balancer, message bus from the start. Every later milestone
 lands in its final home. But we would be tuning a system whose baseline we never
 measured, and every performance question would have five candidate causes.
 
-### Option B — One process first, infrastructure only when measured
+### Option B - One process first, infrastructure only when measured
 Phase 1 is a single binary and a single Postgres. Every added component must be
 justified by a number from the previous milestone.
 
@@ -43,8 +43,8 @@ added at once. With a measured baseline it would have been a single obvious step
 change.
 
 The second reason is that **components must earn their place.** A connection pooler
-solves connection exhaustion — so first show one Postgres connection saturating. A load
-balancer solves one gateway being the limit — so first show the gateway at its limit.
+solves connection exhaustion - so first show one Postgres connection saturating. A load
+balancer solves one gateway being the limit - so first show the gateway at its limit.
 Adding either before the evidence means carrying complexity that solves nothing, while
 obscuring what does.
 
@@ -68,5 +68,5 @@ Phase 2 a deployment change rather than a rewrite.
 
 A measurement showing single-process capacity genuinely exhausted. Note that our
 20k RPS target is one order every 50 microseconds, against a match costing a few
-hundred nanoseconds — so the limit will be I/O, serialisation, and the network, which
+hundred nanoseconds - so the limit will be I/O, serialisation, and the network, which
 is exactly what Phase 2 addresses.

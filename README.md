@@ -5,10 +5,10 @@ A deterministic, high-throughput matching engine and agent-based market simulato
 ## What this is
 
 An in-memory Central Limit Order Book (CLOB) with strict price-time priority, an order
-ingestion API, a WebSocket market-data feed, and asynchronous persistence to PostgreSQL —
+ingestion API, a WebSocket market-data feed, and asynchronous persistence to PostgreSQL -
 driven by a synthetic agent population modelled on the ABIDES simulation framework.
 
-Targets: sustained 15,000–20,000 orders/sec, sub-millisecond median matching latency,
+Targets: sustained 15,000-20,000 orders/sec, sub-millisecond median matching latency,
 p99 under 5 ms, stable memory.
 
 Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf).
@@ -21,7 +21,7 @@ and [`docs/adr/`](docs/adr/) for the decision record.
 ## How this repo is built
 
 Incrementally, and on purpose. Each milestone is a small, shippable step that leaves the
-system working — not a leap. A single Postgres pod before a pooler; a single engine process
+system working - not a leap. A single Postgres pod before a pooler; a single engine process
 before a cluster; a measured bottleneck before an optimisation.
 
 Every non-obvious choice is written down as an Architecture Decision Record in
@@ -33,7 +33,18 @@ us revisit it. Performance claims ship with before/after numbers.
 ```
 docs/
   ROADMAP.md        milestone sequence
+  DELIVERY.md       how work ships: roles, PR contract, merge authority
+  RESOURCES.md      gathered source material, with what each one settles
   adr/              architecture decision records
   reference/        PRD and the ABIDES papers
 learning/           persisted session learnings (see the learning dashboard)
 ```
+
+## How work ships
+
+Three separate people per shipment: one implements, a second writes the test
+scenarios before development starts, a third reviews. Every PR carries the
+scenarios, the E2E and validation results, and the reviewer's verdict on whether it
+needs the captain's attention. The captain approves every merge.
+
+The full contract: [`docs/DELIVERY.md`](docs/DELIVERY.md).

@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-One file per decision that was not obvious. The point is not ceremony — it is that
+One file per decision that was not obvious. The point is not ceremony - it is that
 in six months the reasoning is still here, including the options we rejected and
 what would make us change our minds.
 
@@ -16,3 +16,4 @@ Status is one of: `Proposed`, `Accepted`, `Superseded by NNNN`, `Revisited`.
 | [0004](0004-fixed-point-prices.md) | Integer ticks, never floating point | Accepted |
 | [0005](0005-abides-as-clients.md) | Simulator agents are clients, not a kernel | Accepted |
 | [0006](0006-monolith-first.md) | One process before any cluster | Accepted |
+| [0007](0007-multi-symbol-single-thread.md) | Many symbols, one engine thread | Accepted |

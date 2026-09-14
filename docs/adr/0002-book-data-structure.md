@@ -5,7 +5,7 @@
 ## Context
 
 A limit order book must answer, quickly and constantly: what is the best bid and
-offer; add this order at this price; cancel order #12345. The traffic mix matters —
+offer; add this order at this price; cancel order #12345. The traffic mix matters -
 in real venues adds and cancels dominate as market makers adjust position, and
 executions are a distant third. So cancel must be fast, not merely correct.
 
@@ -15,20 +15,20 @@ for a resting limit order, ~31 ns for a cancel.
 
 ## Options considered
 
-### Option A — Binary tree of price levels, each an intrusive doubly linked list
+### Option A - Binary tree of price levels, each an intrusive doubly linked list
 The textbook design. A balanced tree of price levels; at each level, a doubly linked
 list of orders in arrival order; a hash map from order ID straight to the node.
 Because the node carries its own list pointers and a back-pointer to its level,
-cancel is O(1) — you land on the node and splice it out without scanning.
+cancel is O(1) - you land on the node and splice it out without scanning.
 Add is O(log M) for a new price level, O(1) otherwise.
 
-### Option B — `BTreeMap<Tick, VecDeque<Order>>` plus `HashMap<OrderId, (Side, Tick)>`
+### Option B - `BTreeMap<Tick, VecDeque<Order>>` plus `HashMap<OrderId, (Side, Tick)>`
 The pragmatic Rust version. `BTreeMap` keeps price levels ordered so the best price
 is the first or last entry; `VecDeque` gives FIFO at each level; the hash map finds
 an order's level in O(1). The flaw: cancelling means finding the order *inside* the
-`VecDeque`, which is a scan of that level — O(k) in the level's depth.
+`VecDeque`, which is a scan of that level - O(k) in the level's depth.
 
-### Option C — Flat array price ladder indexed by tick
+### Option C - Flat array price ladder indexed by tick
 Fastest possible level lookup: the price *is* the array index, so O(1) with perfect
 cache locality. Requires a bounded, known price range and pre-allocating every tick,
 most of which stay empty. This is what the lowest-latency venues do.
@@ -44,7 +44,7 @@ Option B is the shortest path to a correct book, and correctness is M1's whole j
 Its weakness is bounded and known: cancel degrades with level depth. We will measure
 that depth in M5 rather than guess at it.
 
-Option A is strictly better on cancel but needs intrusive linked lists — which in
+Option A is strictly better on cancel but needs intrusive linked lists - which in
 Rust means either arena indices or `unsafe`. That is a real design exercise and it
 deserves its own milestone, with a benchmark proving it was needed.
 
