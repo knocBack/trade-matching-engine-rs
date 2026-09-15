@@ -4,24 +4,25 @@
 
 ## Context
 
-The PRD allows either Go or Rust, and names the reference implementation: a Go
-build that reached 18,210 req/s. Our targets are 15-20k RPS sustained, sub-millisecond
-median matching latency, and **p99 under 5 ms**.
+The PRD allows either Go or Rust and names a Go reference implementation that reached
+18,210 requests per second. The later PRD budget is 15-20k sustained orders per
+second, sub-millisecond median matching latency, and **p99 under 5 ms**. That
+reference makes it likely that Go can meet the later budget; it is not rejected as
+incapable.
 
 ## Options considered
 
 ### Option A - Go
 Fastest path. Goroutines and channels map cleanly onto a per-instrument engine loop,
-and the reference build proves the target is reachable. The cost is the garbage
-collector: Go's GC is very good, but it is a pause you did not schedule, and it lands
-on the tail. The PRD explicitly calls out "catastrophic garbage collection pauses" as
-a stability risk.
+and the reference build makes the performance budget credible. Its garbage collector
+can affect tail behaviour, so a Go implementation would need measured tail-latency
+evidence and, where necessary, runtime tuning.
 
 ### Option B - Rust
-No garbage collector, so no pause arrives behind your back. Ownership makes the
-single-writer discipline a compile-time property rather than something code review
-has to catch. The cost is real: slower early iteration while the borrow checker
-teaches you, and a thinner ecosystem for exchange protocols.
+No garbage collector, so ownership and lifetime are explicit in the program. The
+ownership model makes the single-writer shape easier to express and inspect. The cost
+is real: slower early iteration while the borrow checker teaches you, and a thinner
+ecosystem for exchange protocols.
 
 ## Decision
 
@@ -29,14 +30,15 @@ Rust.
 
 ## Why
 
-The number that decides it is **p99 < 5 ms**, not the median. Median latency is easy
-in both languages. A tail budget is a statement about the worst moments - and in Go,
-the worst moments are partly scheduled by a runtime you do not control. In Rust,
-memory is freed at points we choose.
+Rust is an ownership and learning choice. The captain wants the project to expose the
+tradeoffs behind allocation, copying, sharing, and single-writer ownership rather
+than hiding them behind a runtime. Rust gives that learning surface while keeping
+memory lifetime explicit.
 
-The second reason is that the captain asked to learn the tradeoffs. Rust makes the
-tradeoffs explicit: every allocation, every copy, every shared reference is visible
-in the source. That is a feature for this project.
+Avoiding garbage collection may make tail behaviour easier to reason about, but it
+does not establish that Go would miss the PRD budget. Both language choices require
+evidence. The initial HTTP baseline is deliberately provisional; later measurements,
+not an unsupported language claim, settle performance.
 
 ## Consequences
 
@@ -51,5 +53,5 @@ as a source of lessons - particularly its list of bugs - not as code.
 
 ## What would make us revisit
 
-Nothing on the current targets. If the project pivoted to favour iteration speed over
-tail latency, this would be worth reopening.
+If the learning priority changes, or measured delivery cost outweighs the ownership
+benefit, reopen this decision with comparable evidence from both choices.
