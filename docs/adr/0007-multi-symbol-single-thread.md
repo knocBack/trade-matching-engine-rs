@@ -52,7 +52,7 @@ Option C's threading is the part we can add later; Option C's *isolation* is the
 that is expensive to retrofit. B gives us the isolation now, at essentially no cost,
 and leaves the threading decision for when a measurement asks for it.
 
-Concretely: if M5 shows one thread saturating, turning B into C means giving each
+Concretely: if M5b shows one thread saturating, turning B into C means giving each
 book its own queue and thread. The books themselves do not change, because they were
 never allowed to touch each other. If we had shipped A, the same move would mean
 revisiting every signature in the crate.
@@ -71,11 +71,11 @@ performance work only when measured.
 - Cross-symbol operations are forbidden by construction. If a future requirement
   needs one (a basket order, a cross-instrument risk check), it is a new ADR, not an
   incremental change.
-- Per-symbol metrics come free, which M5 needs anyway to show where load concentrates.
+- Per-symbol metrics come free, which M5b needs to show where load concentrates.
 
 ## What would make us revisit
 
-- M5 shows the single engine thread saturated while cores sit idle. That is the
+- M5b shows the single engine thread saturated while cores sit idle. That is the
   signal to move to C, and the books are already shaped for it.
 - The symbol lookup shows up as a measurable fraction of per-order cost in M1's
   benchmarks. That argues for interning symbols to a dense integer index and using a

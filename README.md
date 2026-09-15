@@ -8,15 +8,18 @@ An in-memory Central Limit Order Book (CLOB) with strict price-time priority, an
 ingestion API, a WebSocket market-data feed, and asynchronous persistence to PostgreSQL -
 driven by a synthetic agent population modelled on the ABIDES simulation framework.
 
-Targets: sustained 15,000-20,000 orders/sec, sub-millisecond median matching latency,
-p99 under 5 ms, stable memory.
+The longer-term PRD budget is sustained 15,000-20,000 orders/sec, sub-millisecond
+median matching latency, p99 under 5 ms, and stable memory. It is not the first HTTP
+benchmark gate: the deliberately modest, provisional M3 baseline is recorded in
+[docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf).
 
 ## Status
 
-Planning. No code yet. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the milestone sequence
-and [`docs/adr/`](docs/adr/) for the decision record.
+Planning. No code yet. See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone
+sequence, [docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark
+contract, and [docs/adr/](docs/adr/) for the decision record.
 
 ## How this repo is built
 
@@ -33,7 +36,10 @@ us revisit it. Performance claims ship with before/after numbers.
 ```
 docs/
   ROADMAP.md        milestone sequence
+  BENCHMARK.md      provisional benchmark contract
   DELIVERY.md       how work ships: roles, PR contract, merge authority
+  PLAN-REVISION-REQUIREMENTS.md  written requirements for this documentation revision
+  PLAN-REVISION-SCENARIOS.md     independently authored scenarios for this revision
   RESOURCES.md      gathered source material, with what each one settles
   adr/              architecture decision records
   reference/        PRD and the ABIDES papers
@@ -42,9 +48,13 @@ learning/           persisted session learnings (see the learning dashboard)
 
 ## How work ships
 
-Three separate people per shipment: one implements, a second writes the test
-scenarios before development starts, a third reviews. Every PR carries the
-scenarios, the E2E and validation results, and the reviewer's verdict on whether it
-needs the captain's attention. The captain approves every merge.
+The three delivery roles remain implementer, scenario/test author, and reviewer.
+Every shipment also starts from a written requirement: its author need only differ
+from the scenario author, and a reviewer may author it. That is an independence
+check, not a mandatory fourth role.
+
+Every PR carries written requirements, scenarios, E2E and validation results, and a
+reviewer verdict with two parts: requirement conformance and whether focused captain
+attention is needed. The captain approves every merge.
 
 The full contract: [`docs/DELIVERY.md`](docs/DELIVERY.md).

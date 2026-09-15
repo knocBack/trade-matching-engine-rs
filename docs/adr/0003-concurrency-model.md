@@ -59,17 +59,20 @@ nothing to protect.
 it, since a non-`Send` book simply cannot be moved to another thread.
 
 **Harder:** one symbol's throughput is capped by one core. That cap is inherent, not
-incidental - scale comes from more symbols on more cores (ADR-0006's future), not from
+incidental - scale comes from more symbols on more cores (ADR-0007's future), not from
 more threads on one book.
+
+At M3, if the bounded channel cannot accept a command, ingress rejects it immediately
+without waiting. The response status remains an evidence-led M3 choice rather than a
+decision in this ADR.
 
 **Given up:** nothing real. The parallelism we did not take was not correct anyway.
 
 ## What would make us revisit
 
-A single core provably failing to reach 20k orders/sec for one symbol. Given the
-published per-op numbers are in the hundreds of nanoseconds, 20k/sec - one order every
-50 microseconds - leaves an enormous margin. The bottleneck will be the network and
-serialisation layers, not the match.
+A single core provably failing to reach the later PRD budget for one symbol. The
+bottleneck may be network and serialisation layers rather than matching; measurements
+decide.
 
 ## Implementation note
 

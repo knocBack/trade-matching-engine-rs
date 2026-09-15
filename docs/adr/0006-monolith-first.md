@@ -32,7 +32,7 @@ Option B.
 
 ## Why
 
-**We cannot attribute what we never isolated.** M5 produces our clean ceiling: the
+**We cannot attribute what we never isolated.** M5b produces our clean ceiling: the
 engine's latency with nothing else in the path. Every component added afterwards is
 measured against that line. When p99 moves, we know precisely what moved it, because
 exactly one thing changed.
@@ -47,6 +47,10 @@ solves connection exhaustion - so first show one Postgres connection saturating.
 balancer solves one gateway being the limit - so first show the gateway at its limit.
 Adding either before the evidence means carrying complexity that solves nothing, while
 obscuring what does.
+
+M7 precedes M9 deliberately. The small cluster gives us a reproducible deployment;
+M8 establishes external-load evidence; only then does M9 add durability and rerun the
+same workload. This keeps deployment, load generation, and durability attributable.
 
 This also serves the learning goal directly. "We added a pooler because connections
 maxed out at N and here is the graph" teaches what a pooler is *for*. "We added a

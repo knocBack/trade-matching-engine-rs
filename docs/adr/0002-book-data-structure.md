@@ -33,16 +33,24 @@ Fastest possible level lookup: the price *is* the array index, so O(1) with perf
 cache locality. Requires a bounded, known price range and pre-allocating every tick,
 most of which stay empty. This is what the lowest-latency venues do.
 
+### Option D - Tombstoning
+On cancellation, retain a marker and skip the tombstoned order later rather than
+removing it immediately. This is intentionally generic: it is a cancellation
+strategy, not a commitment to a particular queue or heap representation. It can make
+the immediate cancellation path simpler, but retained tombstones require reliable
+cleanup.
+
 ## Decision
 
 Start with **Option B**, structured so that **Option A**'s O(1) cancel can be added
-behind the same interface, and keep **Option C** as a documented experiment for later.
+behind the same interface, and keep **Option C** as a documented experiment for
+later. Reject **Option D** for the baseline.
 
 ## Why
 
 Option B is the shortest path to a correct book, and correctness is M1's whole job.
 Its weakness is bounded and known: cancel degrades with level depth. We will measure
-that depth in M5 rather than guess at it.
+that depth in M5b rather than guess at it.
 
 Option A is strictly better on cancel but needs intrusive linked lists - which in
 Rust means either arena indices or `unsafe`. That is a real design exercise and it
@@ -50,6 +58,10 @@ deserves its own milestone, with a benchmark proving it was needed.
 
 Option C trades memory for latency in a way we cannot justify before we know our tick
 range and depth profile.
+
+Option D is not a baseline option because it cannot yet establish stable memory
+behaviour or adequate cancellation cleanup. A future proposal would need to specify
+and measure its cleanup discipline before it could be compared safely.
 
 The order matters: **make it correct, measure it, then make it fast.** Doing the
 arena rewrite first would mean optimising a number we have never seen.
@@ -64,6 +76,6 @@ arena rewrite first would mean optimising a number we have never seen.
 
 ## What would make us revisit
 
-The M5 benchmark showing cancel latency tracking level depth, or p99 pressure traced
-to the cancel path. Then ADR-0007 covers the arena-backed intrusive book, with
-before/after numbers.
+M5b evidence showing cancel latency tracking level depth, or p99 pressure traced to
+the cancel path. Revisit this ADR or create a new ADR with before/after numbers; this
+is not a decision owned by ADR-0007.

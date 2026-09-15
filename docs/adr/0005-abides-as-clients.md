@@ -1,6 +1,6 @@
 # 0005. Simulator agents are clients, not a simulation kernel
 
-**Status:** Accepted · **Date:** 2026-09-14 · **Milestone:** M5 / M8
+**Status:** Accepted · **Date:** 2026-09-14 · **Milestone:** M5a / M5b / M8
 
 ## Context
 
@@ -38,8 +38,9 @@ research question ever needs controlled A/B.
 ## Decision
 
 Option B, per the captain's direction: the agents are clients, kept deliberately
-simple. Rust agents in M5 for the clean in-process ceiling; a Python ABIDES-style
-driver in M8, run off-box like a load-test tool.
+simple. Rust agents arrive in M5a; M5b uses their workload and timing evidence for
+the single-machine ceiling. A Python ABIDES-style driver arrives in M8 and runs
+off-box like a load-test tool.
 
 ## Why
 
