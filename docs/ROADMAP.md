@@ -22,9 +22,11 @@ separate delivery roles per shipment, captain approves every merge.
 A pure library crate. No I/O, no async, no network. Limit / market / cancel with
 strict price-time priority. Property tests for the invariants that must never break:
 the book never crosses, FIFO holds within a price level, quantity is conserved,
-and a cancelled order never fills. Every order carries an owner identity, and an
-owner's orders must never trade with one another. This invariant deliberately does
-not choose the prevention action. Criterion benchmarks give us a ns/op number.
+and a cancelled order never fills. Every order carries an owner identity, and an owner's orders must never trade with
+one another. When an incoming order encounters a resting order from the same owner,
+the resting order is cancelled (emitted as `RestingMakerCancelled`) and matching
+continues with the unchanged incoming remainder. Criterion benchmarks give us a ns/op
+number.
 
 **Multi-symbol from the start** (ADR-0007): a map of independent books, each one
 self-contained. One symbol's book never reads another's. That isolation is what

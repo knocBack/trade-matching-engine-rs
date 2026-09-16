@@ -3,3 +3,11 @@ name = "trade-orderbook"
 version = "0.1.0"
 edition = "2024"
 publish = false
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.6"
+
+[[bench]]
+name = "orderbook"
+harness = false
