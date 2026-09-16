@@ -43,7 +43,6 @@ docs/
   RESOURCES.md      gathered source material, with what each one settles
   adr/              architecture decision records
   reference/        PRD and the ABIDES papers
-learning/           persisted session learnings (see the learning dashboard)
 ```
 
 ## How work ships
