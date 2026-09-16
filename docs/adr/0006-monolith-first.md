@@ -71,6 +71,6 @@ Phase 2 a deployment change rather than a rewrite.
 ## What would make us revisit
 
 A measurement showing single-process capacity genuinely exhausted. Note that our
-20k RPS target is one order every 50 microseconds, against a match costing a few
+later PRD budget of 20k RPS is one order every 50 microseconds, against a match costing a few
 hundred nanoseconds - so the limit will be I/O, serialisation, and the network, which
 is exactly what Phase 2 addresses.
