@@ -17,9 +17,9 @@ Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf
 
 ## Status
 
-Planning. No code yet. See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone
-sequence, [docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark
-contract, and [docs/adr/](docs/adr/) for the decision record.
+M0 scaffold landed: a Rust workspace with light CI. See [docs/ROADMAP.md](docs/ROADMAP.md)
+for the milestone sequence, [docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional
+benchmark contract, and [docs/adr/](docs/adr/) for the decision record.
 
 ## How this repo is built
 
