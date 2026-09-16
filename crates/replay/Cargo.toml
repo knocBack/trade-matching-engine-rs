@@ -1,0 +1,20 @@
+[package]
+name = "trade-replay"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+trade-orderbook = { path = "../orderbook" }
+
+[[bin]]
+name = "trade-replay"
+path = "src/main.rs"
+
+[[bench]]
+name = "replay"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.6"

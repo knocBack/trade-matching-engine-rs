@@ -1,0 +1,5 @@
+{"format":"trade-rs-command-tape","version":1,"symbols":["XYZ"]}
+{"type":"limit","symbol":"XYZ","order_id":1,"owner_id":2,"side":"sell","price_ticks":100,"quantity":2}
+{"type":"limit","symbol":"XYZ","order_id":2,"owner_id":1,"side":"sell","price_ticks":101,"quantity":7}
+{"type":"limit","symbol":"XYZ","order_id":3,"owner_id":3,"side":"sell","price_ticks":102,"quantity":5}
+{"type":"limit","symbol":"XYZ","order_id":4,"owner_id":1,"side":"buy","price_ticks":102,"quantity":6}
