@@ -18,10 +18,12 @@ Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf
 ## Status
 
 M1 landed: a correct, multi-symbol order book with strict price-time priority and
-self-trade prevention (same-owner cancellation). M0 scaffold already landed (Rust
-workspace with light CI). See [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone
-sequence, [docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark
-contract, and [docs/adr/](docs/adr/) for the decision record.
+self-trade prevention (same-owner cancellation). M2 adds an offline `trade-replay`
+binary that deterministically replays a canonical command tape into an event tape.
+M0 scaffold already landed (Rust workspace with light CI). See
+[docs/ROADMAP.md](docs/ROADMAP.md) for the milestone sequence,
+[docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark contract, and
+[docs/adr/](docs/adr/) for the decision record.
 
 ## How this repo is built
 

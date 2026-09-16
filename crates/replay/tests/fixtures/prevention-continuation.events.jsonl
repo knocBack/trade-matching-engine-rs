@@ -1,0 +1,8 @@
+{"format":"trade-rs-event-tape","version":1,"command_version":1,"symbols":["XYZ"]}
+{"type":"command_completed","command_index":1,"symbol":"XYZ","order_id":1,"disposition":{"type":"resting","remaining":2}}
+{"type":"command_completed","command_index":2,"symbol":"XYZ","order_id":2,"disposition":{"type":"resting","remaining":7}}
+{"type":"command_completed","command_index":3,"symbol":"XYZ","order_id":3,"disposition":{"type":"resting","remaining":5}}
+{"type":"trade_executed","command_index":4,"symbol":"XYZ","maker_order_id":1,"taker_order_id":4,"maker_owner_id":2,"taker_owner_id":1,"price_ticks":100,"quantity":2}
+{"type":"resting_order_cancelled","command_index":4,"symbol":"XYZ","maker_order_id":2,"maker_owner_id":1,"taker_order_id":4,"taker_owner_id":1,"maker_side":"sell","price_ticks":101,"cancelled_quantity":7,"reason":"self_trade_prevention"}
+{"type":"trade_executed","command_index":4,"symbol":"XYZ","maker_order_id":3,"taker_order_id":4,"maker_owner_id":3,"taker_owner_id":1,"price_ticks":102,"quantity":4}
+{"type":"command_completed","command_index":4,"symbol":"XYZ","order_id":4,"disposition":{"type":"filled"}}

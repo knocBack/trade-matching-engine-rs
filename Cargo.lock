@@ -683,6 +683,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "trade-replay"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "proptest",
+ "trade-orderbook",
+]
+
+[[package]]
 name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
