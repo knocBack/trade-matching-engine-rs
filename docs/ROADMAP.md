@@ -12,11 +12,12 @@ version has shown us a concrete reason it is not enough.
 ## Phase 1 - The engine earns its numbers (single process, no cluster)
 
 ### M0 · Scaffold
-Cargo workspace that builds green. Light CI on push: `fmt`, `clippy -D warnings`,
-`test`. ADR habit established, and the delivery contract in `DELIVERY.md` in force
-from the first PR onward - written requirements and scenarios before code, three
-separate delivery roles per shipment, captain approves every merge.
-**Ships:** an empty repo that is already disciplined.
+Cargo workspace that builds green. Light CI on pull requests and pushes to `main`:
+`fmt`, `clippy -D warnings`, `test`. ADR habit established, and the delivery
+contract in `DELIVERY.md` in force from the first PR onward - written requirements
+and scenarios before code, three separate delivery roles per shipment, captain
+approves every merge.
+**Ships:** a minimal Rust scaffold that is already disciplined.
 
 ### M1 · The order book
 A pure library crate. No I/O, no async, no network. Limit / market / cancel with
