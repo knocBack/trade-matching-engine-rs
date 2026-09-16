@@ -459,12 +459,10 @@ impl OrderBook {
     }
 
     fn snapshot_levels(levels: &Levels, reverse: bool) -> Vec<PriceLevelSnapshot> {
-        let iter: Box<dyn DoubleEndedIterator<Item = (&PriceTicks, &VecDeque<RestingOrder>)>> =
-            Box::new(levels.iter());
         let entries: Vec<_> = if reverse {
-            iter.rev().collect()
+            levels.iter().rev().collect()
         } else {
-            iter.collect()
+            levels.iter().collect()
         };
         entries
             .into_iter()
