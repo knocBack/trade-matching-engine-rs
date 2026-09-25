@@ -2,18 +2,19 @@
 
 The immutable contracts are `docs/requirements/M3.md` (architecture author) and
 `docs/scenarios/M3.md` (independent scenario author, written before production code).
-The implementer has not authored executable HTTP tests. The pipeline must assign
-executable scenario coverage to its independent test/fix agent and perform a fresh
-independent review afterward, preserving the three roles in `docs/DELIVERY.md`.
+Focused executable loopback coverage now lives in `crates/http/src/lib.rs`. With a
+deterministically paused owner, it verifies finite queue admission returns
+`503 ingress_overloaded`, a post-admission disconnect does not roll back the command,
+and shutdown closes admission then drains the admitted command before the engine exits.
+The tests observe admission/completion counters rather than sleeping and exercise the
+actual HTTP/1.1 adapter.
 
-Required coverage: H1–H9, P1–P7, D1–D4, S1–S4, Q1–Q10, M1–M8 and benchmark B1–B5.
-The actual loopback HTTP adapter must be exercised, including a deterministically
-paused owner BEFORE server startup for Q1/Q9/Q10. Existing private cfg(test)
-EngineHooks allows initial pause and failure without exposing production controls.
-Do not substitute connection failures for the attached-client 500 in Q9 or
-weaken event assertions: settled self-trade cancellation preserves taker remainder.
-Keep full status/bodies, snapshot/counter reconciliation, fixed property seeds,
-and test output in the evidence. No sleeps as a substitute for observed admission.
+Complete M3 conformance coverage remains H1–H9, P1–P7, D1–D4, S1–S4, Q1–Q10, M1–M8
+and benchmark B1–B5. The remaining scenarios need independent coverage and a fresh
+independent review under `docs/DELIVERY.md`. Keep full status/bodies,
+snapshot/counter reconciliation, fixed property seeds, and test output in the evidence.
+Do not substitute connection failures for the attached-client 500 in Q9 or weaken
+event assertions: settled self-trade cancellation preserves taker remainder.
 
 Initial run 01M2P6SM2GM65DXBPC36A7G2MB failed in its Claude fix subprocess:
 DeepSeek-V4-Pro-2 was unrecognized and the 30-minute deadline expired.
