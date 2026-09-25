@@ -267,7 +267,7 @@ fn engine_loop(
             .lock()
             .unwrap()
             .metrics
-            .queue_current -= 1;
+            .queue_current = receiver.len();
         let completed = match message.work {
             Work::Command(command) => {
                 index = index.checked_add(1).expect("command index exhausted");
@@ -404,7 +404,17 @@ async fn request_handler(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let route = match route(&request) {
         Ok(r) => r,
-        Err(e) => return Ok(error_response(e)),
+        Err(e) => {
+            if e.0 == 405 {
+                let endpoint = match request.uri().path() {
+                    "/orders" => Route::Post,
+                    "/book" => Route::Book,
+                    _ => Route::Delete,
+                };
+                handle.record(endpoint.name(), e.0, false);
+            }
+            return Ok(error_response(e));
+        }
     };
     let outcome = process(request, route, &handle).await;
     let (status, body, overload) = match outcome {

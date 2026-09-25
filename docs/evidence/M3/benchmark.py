@@ -7,6 +7,7 @@ recorded as generator_capacity failures. Every sample is retained in gzip CSV.
 import argparse
 import asyncio
 import csv
+from collections import deque
 import gzip
 import json
 import math
@@ -17,7 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 
-VERSION = 'm3-http-wall-v1'
+VERSION = 'm3-http-wall-v2'
 SYMBOLS = ['A', 'B', 'C', 'D']
 
 class Connection:
@@ -67,6 +68,7 @@ def aggregate(samples, seconds):
         key = f"{s['outcome']}:{s['status']}:{s['code']}"
         counts[key] = counts.get(key, 0) + 1
     groups = {'all':completed, '200':[s for s in completed if s['status']==200], '503':[s for s in completed if s['status']==503]}
+    groups.update({endpoint:[s for s in completed if s['endpoint']==endpoint] for endpoint in ['POST','DELETE']})
     groups.update({kind:[s for s in completed if s['category']==kind] for kind in ['limit','market','delete']})
     return dict(offered=len(samples),dispatched=sum(s['dispatch'] is not None for s in samples),completed=len(completed),
                 http_200=sum(s['status']==200 for s in samples),http_503=sum(s['status']==503 for s in samples),
@@ -94,7 +96,7 @@ async def run(args):
         ready = json.loads(await process.stdout.readline())
         port = int(ready['listening'].split(':')[-1])
         clients = await asyncio.gather(*(Connection().open(port) for _ in range(args.clients)))
-        free = clients.copy()
+        free = deque(clients)
         offers = int(args.rate*(args.warmup+args.duration))
         pool = math.ceil(math.ceil(offers/16)*1.1)
         # Each symbol needs its own market and protected cancellation pools.
@@ -106,10 +108,15 @@ async def run(args):
         await asyncio.gather(*(preload_worker(c,i) for i,c in enumerate(clients)))
         async def snapshots(name):
             values = {}
-            for s in SYMBOLS:
-                status,body,_ = await clients[0].request('GET',f'/book?symbol={s}')
-                assert status == 200
-                values[s] = body
+            # Control traffic uses its own fresh connection outside timed offers.
+            control = await Connection().open(port)
+            try:
+                for s in SYMBOLS:
+                    status,body,_ = await control.request('GET',f'/book?symbol={s}')
+                    assert status == 200
+                    values[s] = body
+            finally:
+                await control.close()
             with gzip.open(out/f'{name}.json.gz','wt') as f:
                 json.dump(values,f,separators=(',',':'))
             return values
@@ -154,13 +161,17 @@ async def run(args):
                 method,path,body='POST','/orders',order(symbol,(2_000_000 if category=='limit' else 3_000_000)+i,kind='limit' if category=='limit' else 'market')
             if not free:
                 continue
-            c=free.pop()
+            c=free.popleft()
             sample['dispatch']=time.perf_counter()-origin
             task=asyncio.create_task(dispatch(c,sample,method,path,body))
             pending.add(task)
             task.add_done_callback(pending.discard)
         await asyncio.gather(*pending)  # drain every dispatched client attempt
         drained=time.perf_counter()-origin
+        # Retain timed offers even if later control-plane collection fails.
+        with gzip.open(out/'samples.csv.gz','wt',newline='') as f:
+            writer=csv.DictWriter(f,fieldnames=list(samples[0]))
+            writer.writeheader();writer.writerows(samples)
         after=await snapshots('final')
         await asyncio.gather(*(c.close() for c in clients))
         clients=[]
@@ -178,6 +189,9 @@ async def run(args):
         warm=aggregate(samples[:warm_count],args.warmup) if warm_count else None
         summary['gate_demonstrated']=(summary['missing_fraction']<.1 and summary['http_wall_ms']['all'] is not None and summary['http_wall_ms']['all']['p90']<=1000)
         summary['server']=metrics
+        summary['release_profile']='release'
+        summary['host_details']=subprocess.check_output(['sysctl','-n','machdep.cpu.brand_string','hw.physicalcpu','hw.logicalcpu','hw.memsize'],text=True).splitlines() if platform.system()=='Darwin' else []
+        summary['runtime_notes']={'affinity':'not pinned; macOS scheduler, generator and server share host', 'power_thermal':'not controlled; unknown thermal state', 'debug_request_logging':False, 'colocated_load':'Codex worker and shared no-mistakes daemon; no dedicated isolation'}
         summary['warmup']=warm
         summary['drained_seconds']=drained
         summary['final_orders']={s:sum(len(l['orders']) for l in after[s]['bids']+after[s]['asks']) for s in SYMBOLS}
