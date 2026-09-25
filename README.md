@@ -17,10 +17,10 @@ Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf
 
 ## Status
 
-M1 landed: a correct, multi-symbol order book with strict price-time priority and
-self-trade prevention (same-owner cancellation). M2 adds an offline `trade-replay`
-binary that deterministically replays a canonical command tape into an event tape.
-M0 scaffold already landed (Rust workspace with light CI). See
+M0-M3 have landed: the workspace and light CI, the correct multi-symbol order book,
+deterministic offline replay, and the bounded HTTP adapter. The requirements-only M4
+WebSocket market-data contract is now defined for a separate implementation PR; no M4
+runtime endpoint is claimed yet. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone sequence,
 [docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark contract, and
 [docs/adr/](docs/adr/) for the decision record.
@@ -67,3 +67,11 @@ The full contract: [`docs/DELIVERY.md`](docs/DELIVERY.md).
 `cargo run --release -p trade-http -- --symbols BTC-USD,ETH-USD` starts the
 bounded HTTP/1.1 adapter over M2. See [HTTP.md](docs/HTTP.md) for endpoints,
 finite limits, graceful drain and benchmark reproduction.
+
+## Market-data contract (M4)
+
+The normative pre-implementation WebSocket v1 contract is
+[docs/requirements/M4.md](docs/requirements/M4.md). It specifies a one-symbol feed,
+per-process stream identity, per-symbol contiguous sequences, initial L2 baseline,
+reconnect-only resynchronisation, and bounded slow-consumer disconnection. Runtime
+implementation is intentionally deferred to its own PR.
