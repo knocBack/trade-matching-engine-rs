@@ -12,6 +12,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
     thread,
+    time::Duration,
 };
 use tokio::{
     net::TcpListener,
@@ -339,7 +340,12 @@ async fn serve(
                     let _permit = permit;
                     let service_handle = h.clone();
                     let mut builder = http1::Builder::new();
-                    builder.keep_alive(true).max_buf_size(16384).max_headers(64).timer(TokioTimer::new());
+                    builder
+                        .keep_alive(true)
+                        .max_buf_size(16384)
+                        .max_headers(64)
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(Duration::from_secs(30));
                     let connection = builder.serve_connection(TokioIo::new(stream), service_fn(move |request| request_handler(request, service_handle.clone())));
                     tokio::pin!(connection);
                     let result = if *stopping.borrow() {

@@ -31,6 +31,14 @@ The implementer rebased M3 onto main 88c4251 after M2 PR #4 merged, then fixed:
 The original trailing-JSON review claim was incorrect: serde_json::from_slice
 rejects trailing non-whitespace. Preserve a real HTTP regression for that fact.
 
+Recovery run `01M3B2PDXCQQXX74WD4MV84W7S` exercised the actual loopback server
+with one connection slot held by an incomplete HTTP header for 32 seconds, then
+verified that a follow-up `GET /book` acquired that released slot. The transcript
+is retained by the gate as `m3-slow-header-timeout-http.txt`. Hyper 1.11.1's
+timer-backed HTTP/1 builder has the same 30-second default, but the adapter now
+sets `header_read_timeout(Duration::from_secs(30))` explicitly so this bounded
+connection behavior does not depend on that dependency default.
+
 Completion requires explicit independent requirement-conformance and focused
 captain-attention verdicts, all three canonical release runs plus stepped probes,
 an open unmerged PR targeting main, and an empty or explicitly routed captain-call
