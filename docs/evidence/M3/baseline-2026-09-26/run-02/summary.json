@@ -1,0 +1,262 @@
+{
+  "offered": 60000,
+  "dispatched": 60000,
+  "completed": 60000,
+  "http_200": 60000,
+  "http_503": 0,
+  "domain_errors": 0,
+  "timeouts": 0,
+  "connection_errors": 0,
+  "generator_capacity": 0,
+  "outstanding": 0,
+  "counts": {
+    "response:200:": 60000
+  },
+  "http_wall_ms": {
+    "all": {
+      "p50": 0.45612499525304884,
+      "p90": 0.6942910113139078,
+      "p95": 0.8879590022843331,
+      "p99": 3.467874994385056,
+      "max": 101.3259159954032
+    },
+    "200": {
+      "p50": 0.45612499525304884,
+      "p90": 0.6942910113139078,
+      "p95": 0.8879590022843331,
+      "p99": 3.467874994385056,
+      "max": 101.3259159954032
+    },
+    "503": null,
+    "POST": {
+      "p50": 0.47487500705756247,
+      "p90": 0.7099579961504787,
+      "p95": 0.9040419972734526,
+      "p99": 3.707916010171175,
+      "max": 101.3259159954032
+    },
+    "DELETE": {
+      "p50": 0.4245409945724532,
+      "p90": 0.6348330061882734,
+      "p95": 0.8202090102713555,
+      "p99": 2.955707997898571,
+      "max": 100.89583399530966
+    },
+    "limit": {
+      "p50": 0.47175001236610115,
+      "p90": 0.7072919979691505,
+      "p95": 0.9020830038934946,
+      "p99": 3.6998750001657754,
+      "max": 101.31570800149348
+    },
+    "market": {
+      "p50": 0.48299999616574496,
+      "p90": 0.7152910111472011,
+      "p95": 0.913040988962166,
+      "p99": 3.7120829947525635,
+      "max": 101.3259159954032
+    },
+    "delete": {
+      "p50": 0.4245409945724532,
+      "p90": 0.6348330061882734,
+      "p95": 0.8202090102713555,
+      "p99": 2.955707997898571,
+      "max": 100.89583399530966
+    }
+  },
+  "scheduling_lag_ms": {
+    "p50": 0.2404589969700055,
+    "p90": 0.30675000033397737,
+    "p95": 0.5036670011477895,
+    "p99": 3.5609590051421947,
+    "max": 90.50412499287575
+  },
+  "offered_response_ms": {
+    "p50": 0.6971249937777202,
+    "p90": 1.0320420066136649,
+    "p95": 1.6567919950460919,
+    "p99": 6.240084004936364,
+    "max": 108.9903750008645
+  },
+  "successful_rps": 500.0,
+  "completed_rps": 500.0,
+  "missing_fraction": 0.0,
+  "rejection_fraction": 0.0,
+  "gate_demonstrated": true,
+  "server": {
+    "requests": {
+      "DELETE /orders/:id:200": 18748,
+      "GET /book:200": 8,
+      "POST /orders:200": 97508
+    },
+    "commands_admitted": 116256,
+    "commands_completed": 116256,
+    "domain_rejected": {},
+    "overload": 0,
+    "queue_current": 0,
+    "queue_high_water": 29,
+    "snapshots_admitted": 8,
+    "snapshots_completed": 8,
+    "snapshots_rejected": 0,
+    "completion_delivery_failures": 0,
+    "connection_errors": 0,
+    "connections_rejected": 0,
+    "graceful_engine_exits": 1,
+    "abnormal_engine_exits": 0
+  },
+  "release_profile": "release",
+  "host_details": [
+    "Apple M1",
+    "8",
+    "8",
+    "17179869184"
+  ],
+  "runtime_notes": {
+    "affinity": "not pinned; macOS scheduler, generator and server share host",
+    "power_thermal": "not controlled; unknown thermal state",
+    "debug_request_logging": false,
+    "colocated_load": "Codex worker and shared no-mistakes daemon; no dedicated isolation"
+  },
+  "warmup": {
+    "offered": 15000,
+    "dispatched": 15000,
+    "completed": 15000,
+    "http_200": 15000,
+    "http_503": 0,
+    "domain_errors": 0,
+    "timeouts": 0,
+    "connection_errors": 0,
+    "generator_capacity": 0,
+    "outstanding": 0,
+    "counts": {
+      "response:200:": 15000
+    },
+    "http_wall_ms": {
+      "all": {
+        "p50": 0.4501670046010986,
+        "p90": 0.686083993059583,
+        "p95": 0.8177919953595847,
+        "p99": 3.9288330008275807,
+        "max": 56.93662499834318
+      },
+      "200": {
+        "p50": 0.4501670046010986,
+        "p90": 0.686083993059583,
+        "p95": 0.8177919953595847,
+        "p99": 3.9288330008275807,
+        "max": 56.93662499834318
+      },
+      "503": null,
+      "POST": {
+        "p50": 0.47074999019969255,
+        "p90": 0.7019580079941079,
+        "p95": 0.8397909987252206,
+        "p99": 4.250250000040978,
+        "max": 56.93662499834318
+      },
+      "DELETE": {
+        "p50": 0.42074998782482,
+        "p90": 0.6244999967748299,
+        "p95": 0.753082989831455,
+        "p99": 2.9868749988963827,
+        "max": 56.25966700608842
+      },
+      "limit": {
+        "p50": 0.4676249955082312,
+        "p90": 0.6923750042915344,
+        "p95": 0.8433750044787303,
+        "p99": 4.867458992521279,
+        "max": 56.93662499834318
+      },
+      "market": {
+        "p50": 0.4779170121764764,
+        "p90": 0.7151250028982759,
+        "p95": 0.8361250074813142,
+        "p99": 3.4967090032296255,
+        "max": 49.73491698910948
+      },
+      "delete": {
+        "p50": 0.42074998782482,
+        "p90": 0.6244999967748299,
+        "p95": 0.753082989831455,
+        "p99": 2.9868749988963827,
+        "max": 56.25966700608842
+      }
+    },
+    "scheduling_lag_ms": {
+      "p50": 0.24029199220265696,
+      "p90": 0.30245899886338634,
+      "p95": 0.38362500444044656,
+      "p99": 3.9409589981660442,
+      "max": 44.53924999968129
+    },
+    "offered_response_ms": {
+      "p50": 0.6908340011726466,
+      "p90": 0.993500004522474,
+      "p95": 1.2551669989484537,
+      "p99": 10.804750001057073,
+      "max": 66.68120900366903
+    },
+    "successful_rps": 500.0,
+    "completed_rps": 500.0,
+    "missing_fraction": 0.0,
+    "rejection_fraction": 0.0
+  },
+  "drained_seconds": 149.99887629199657,
+  "final_orders": {
+    "A": 10316,
+    "B": 10316,
+    "C": 10316,
+    "D": 10316
+  },
+  "reconciliation": {
+    "commands_admitted_minus_completed": 0,
+    "preload_commands": 41256,
+    "load_admitted": 75000,
+    "load_engine_completed": 75000,
+    "load_http_200": 75000,
+    "load_admitted_rps": 500.0,
+    "load_engine_completed_rps": 500.0
+  },
+  "configuration": {
+    "server": "target/release/trade-http",
+    "output": "docs/evidence/M3/baseline-2026-09-26/run-02",
+    "rate": 500,
+    "warmup": 30.0,
+    "duration": 120.0,
+    "clients": 128,
+    "timeout": 10.0,
+    "queue": 256,
+    "in_flight": 512,
+    "invocation": [
+      "/Users/prashanth/.treehouse/trade-rs-fc80db/6/trade-rs/target/release/trade-http",
+      "--listen",
+      "127.0.0.1:0",
+      "--symbols",
+      "A,B,C,D",
+      "--queue-capacity",
+      "256",
+      "--in-flight",
+      "512",
+      "--connections",
+      "1024",
+      "--body-limit",
+      "16384"
+    ],
+    "pool_per_symbol": 5157,
+    "ticks": {
+      "match": 100,
+      "cancel": -100,
+      "new": 0
+    },
+    "version": "m3-http-wall-v2"
+  },
+  "environment": {
+    "python": "3.14.2",
+    "os": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "logical_cpus": 8,
+    "commit": "a514a6b653f315a50850646a6b22cd4dae2fcc20",
+    "git_status": "?? docs/evidence/M3/baseline-2026-09-26/\n",
+    "rust": "rustc 1.87.0 (17067e9ac 2025-05-09)"
+  }
+}
