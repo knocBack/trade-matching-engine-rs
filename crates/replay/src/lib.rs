@@ -485,7 +485,8 @@ fn encode_event_tape(symbols: &[Symbol], events: &[EngineEvent]) -> String {
     output
 }
 
-fn encode_event(output: &mut String, event: &EngineEvent) {
+/// Append one M2 v1 event as JSON, without a tape header or newline.
+pub fn encode_event(output: &mut String, event: &EngineEvent) {
     match event {
         EngineEvent::TradeExecuted {
             command_index,
