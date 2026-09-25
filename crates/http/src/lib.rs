@@ -538,3 +538,171 @@ fn error_response(error: Error) -> Response<Full<Bytes>> {
         serde_json::json!({"error":{"code":error.1}}).to_string(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::{Method, StatusCode, client::conn::http1};
+    use tokio::{
+        io::AsyncWriteExt,
+        net::TcpStream,
+        time::{Duration, timeout},
+    };
+
+    const ORDER: &str = r#"{"type":"limit","symbol":"BTC-USD","order_id":%d,"owner_id":7,"side":"buy","price_ticks":100,"quantity":1}"#;
+
+    fn paused_control() -> EngineControl {
+        Arc::new((Mutex::new((true, false)), std::sync::Condvar::new()))
+    }
+
+    fn resume(control: &EngineControl) {
+        let (lock, cond) = &**control;
+        lock.lock().unwrap().0 = false;
+        cond.notify_all();
+    }
+
+    async fn server(queue_capacity: usize) -> (Server, EngineControl) {
+        let control = paused_control();
+        let config = Config {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            symbols: vec![Symbol::new("BTC-USD")],
+            queue_capacity,
+            in_flight: 4,
+            body_limit: 16 * 1024,
+            connections: 8,
+        };
+        let server = Server::start(
+            config,
+            EngineHooks {
+                control: Some(control.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        (server, control)
+    }
+
+    async fn request(
+        address: SocketAddr,
+        method: Method,
+        path: &str,
+        body: String,
+    ) -> (StatusCode, serde_json::Value) {
+        let stream = TcpStream::connect(address).await.unwrap();
+        let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await.unwrap();
+        let connection = tokio::spawn(async move { connection.await.unwrap() });
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(body)))
+            .unwrap();
+        let response = sender.send_request(request).await.unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        drop(sender);
+        connection.await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    async fn wait_for(handle: &Handle, predicate: impl Fn(&Metrics) -> bool) {
+        timeout(Duration::from_secs(1), async {
+            while !predicate(&handle.metrics()) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("observed server state before timeout");
+    }
+
+    #[tokio::test]
+    async fn queue_capacity_rejects_another_http_command_before_engine_execution() {
+        let (server, control) = server(1).await;
+        let first = tokio::spawn(request(
+            server.address,
+            Method::POST,
+            "/orders",
+            ORDER.replace("%d", "1"),
+        ));
+        wait_for(&server.handle, |metrics| metrics.commands_admitted == 1).await;
+
+        let (status, body) = request(
+            server.address,
+            Method::POST,
+            "/orders",
+            ORDER.replace("%d", "2"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["error"]["code"], "ingress_overloaded");
+        assert_eq!(server.handle.metrics().commands_admitted, 1);
+        assert_eq!(server.handle.metrics().commands_completed, 0);
+
+        resume(&control);
+        assert_eq!(first.await.unwrap().0, StatusCode::OK);
+        let metrics = server.shutdown().await.unwrap();
+        assert_eq!(metrics.commands_admitted, 1);
+        assert_eq!(metrics.commands_completed, 1);
+    }
+
+    #[tokio::test]
+    async fn disconnected_client_after_admission_does_not_rollback_its_command() {
+        let (server, control) = server(1).await;
+        let mut stream = TcpStream::connect(server.address).await.unwrap();
+        let body = ORDER.replace("%d", "51");
+        let raw_request = format!(
+            "POST /orders HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(raw_request.as_bytes()).await.unwrap();
+        wait_for(&server.handle, |metrics| metrics.commands_admitted == 1).await;
+        drop(stream);
+
+        resume(&control);
+        wait_for(&server.handle, |metrics| metrics.commands_completed == 1).await;
+        let (status, book) = request(
+            server.address,
+            Method::GET,
+            "/book?symbol=BTC-USD",
+            String::new(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(book["bids"][0]["orders"][0]["order_id"], 51);
+        let metrics = server.shutdown().await.unwrap();
+        assert_eq!(metrics.commands_admitted, 1);
+        assert_eq!(metrics.commands_completed, 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_an_admitted_command_before_engine_exit() {
+        let (server, control) = server(1).await;
+        let handle = server.handle.clone();
+        let pending = tokio::spawn(request(
+            server.address,
+            Method::POST,
+            "/orders",
+            ORDER.replace("%d", "71"),
+        ));
+        wait_for(&handle, |metrics| metrics.commands_admitted == 1).await;
+
+        let draining = tokio::spawn(server.shutdown());
+        timeout(Duration::from_secs(1), async {
+            while !handle.unavailable() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("shutdown closed admission before timeout");
+        resume(&control);
+
+        let (status, body) = pending.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["events"][0]["order_id"], 71);
+        let metrics = draining.await.unwrap().unwrap();
+        assert_eq!(metrics.commands_admitted, 1);
+        assert_eq!(metrics.commands_completed, 1);
+        assert_eq!(metrics.graceful_engine_exits, 1);
+    }
+}
