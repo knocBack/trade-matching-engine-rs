@@ -61,3 +61,9 @@ reviewer verdict with two parts: requirement conformance and whether focused cap
 attention is needed. The captain approves every merge.
 
 The full contract: [`docs/DELIVERY.md`](docs/DELIVERY.md).
+
+## HTTP adapter (M3)
+
+`cargo run --release -p trade-http -- --symbols BTC-USD,ETH-USD` starts the
+bounded HTTP/1.1 adapter over M2. See [HTTP.md](docs/HTTP.md) for endpoints,
+finite limits, graceful drain and benchmark reproduction.
