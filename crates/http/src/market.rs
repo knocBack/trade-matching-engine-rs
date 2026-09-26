@@ -28,6 +28,39 @@ pub(crate) struct Event {
     pub(crate) record: Record,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum RecordKind {
+    Trade,
+    Bbo,
+    L2,
+}
+
+impl RecordKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Trade => "trade",
+            Self::Bbo => "bbo",
+            Self::L2 => "l2_snapshot",
+        }
+    }
+}
+
+impl Record {
+    pub(crate) fn kind(&self) -> RecordKind {
+        match self {
+            Self::Trade { .. } => RecordKind::Trade,
+            Self::Bbo { .. } => RecordKind::Bbo,
+            Self::L2 { .. } => RecordKind::L2,
+        }
+    }
+}
+
+pub(crate) struct Publication {
+    pub(crate) sequence: u64,
+    pub(crate) kind: RecordKind,
+    pub(crate) receivers: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Level {
     pub(crate) price_ticks: i64,
@@ -95,13 +128,13 @@ impl Feeds {
         symbol: &Symbol,
         events: &[EngineEvent],
         snapshot: MarketDataSnapshot,
-    ) -> usize {
+    ) -> Vec<Publication> {
         let feed = self
             .by_symbol
             .get_mut(symbol)
             .expect("configured symbol exists");
         let next_projection = projection(snapshot);
-        let mut count = 0;
+        let mut publications = Vec::new();
         for event in events {
             if let EngineEvent::TradeExecuted {
                 price_ticks,
@@ -109,41 +142,44 @@ impl Feeds {
                 ..
             } = event
             {
-                feed.send(Record::Trade {
+                publications.push(feed.send(Record::Trade {
                     price_ticks: price_ticks.0,
                     quantity: quantity.0,
-                });
-                count += 1;
+                }));
             }
         }
         if bbo(&feed.projection) != bbo(&next_projection) {
-            feed.send(Record::Bbo {
+            publications.push(feed.send(Record::Bbo {
                 bid: next_projection.bids.first().cloned(),
                 ask: next_projection.asks.first().cloned(),
-            });
-            count += 1;
+            }));
         }
         if feed.projection != next_projection {
-            feed.send(Record::L2 {
+            publications.push(feed.send(Record::L2 {
                 projection: next_projection.clone(),
-            });
-            count += 1;
+            }));
         }
         feed.projection = next_projection;
-        count
+        publications
     }
 }
 
 impl Feed {
-    fn send(&mut self, record: Record) {
+    fn send(&mut self, record: Record) -> Publication {
         self.sequence = self
             .sequence
             .checked_add(1)
             .expect("market-data sequence exhausted");
-        let _ = self.sender.send(Arc::new(Event {
+        let kind = record.kind();
+        let receivers = self.sender.send(Arc::new(Event {
             sequence: self.sequence,
             record,
         }));
+        Publication {
+            sequence: self.sequence,
+            kind,
+            receivers: receivers.unwrap_or(0),
+        }
     }
 }
 

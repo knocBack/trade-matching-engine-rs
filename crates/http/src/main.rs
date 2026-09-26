@@ -66,7 +66,10 @@ async fn main() -> io::Result<()> {
     let server = Server::bind(config).await?;
     println!(
         "{}",
-        serde_json::json!({"listening":server.address.to_string()})
+        serde_json::json!({
+            "listening":server.address.to_string(),
+            "market_data_config":server.handle.metrics().market_data_config,
+        })
     );
     let handle = server.handle.clone();
     let wait = server.wait();

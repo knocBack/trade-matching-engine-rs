@@ -1,8 +1,8 @@
 # M3: bounded in-process HTTP adapter
 
 Run `cargo run --release -p trade-http -- --symbols A,B,C,D`.
-The server prints its bound address at startup and JSON reconciliation counters on
-exit. SIGINT or SIGTERM closes admission, drains all admitted FIFO work, flushes
+The server prints its bound address and resolved market-data configuration at startup,
+then JSON reconciliation counters on exit. SIGINT or SIGTERM closes admission, drains all admitted FIFO work, flushes
 connected responses and joins the engine. Restart starts empty. A disconnected
 client cannot infer whether an admitted command completed; the adapter never retries.
 
@@ -96,6 +96,9 @@ constructed by the adapter, not proof the peer received the bytes. Failed onesho
 delivery and connection I/O errors have separate counters. Queue depth/high-water
 sample actual channel occupancy; concurrent dequeue may make a transient peak
 unobserved. At graceful drain the queue and admitted-minus-completed counts are zero.
+M4 counters additionally expose upgrade outcomes, per-symbol subscriber and sequence
+state, logical ring publications, per-type frame and byte writes, disconnect reasons,
+publisher exits, forced task aborts, and resolved finite configuration.
 
 The deterministic Python standard-library harness in
 `evidence/M3/benchmark.py` uses release loopback HTTP/1.1 keep-alive and a bounded

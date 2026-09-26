@@ -38,6 +38,10 @@ use wire::{Error, MALFORMED, MARKET_OVERLOADED, OVERLOADED, UNAVAILABLE};
 
 const MARKET_DATA_PROTOCOL: &str = "trade-rs.market-data.v1";
 
+fn duration_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub listen: SocketAddr,
@@ -78,6 +82,18 @@ impl Default for Config {
     }
 }
 impl Config {
+    fn maximum_market_data_frame(&self) -> usize {
+        let max_symbol = self
+            .symbols
+            .iter()
+            .map(|symbol| symbol.as_str().len())
+            .max()
+            .unwrap_or(0);
+        512_usize
+            .saturating_add(max_symbol.saturating_mul(6))
+            .saturating_add(self.market_data_depth.saturating_mul(2).saturating_mul(96))
+    }
+
     fn validate(&self) -> io::Result<()> {
         if self.queue_capacity == 0
             || self.in_flight == 0
@@ -106,18 +122,7 @@ impl Config {
                 "invalid finite HTTP or market-data limits",
             ));
         }
-        let max_symbol = self
-            .symbols
-            .iter()
-            .map(|s| s.as_str().len())
-            .max()
-            .unwrap_or(0);
-        // The escaped symbol can take six bytes per input byte. This conservative
-        // bound covers a depth-100 L2 frame with i64 prices and u128 quantities.
-        let maximum_frame = 512_usize
-            .saturating_add(max_symbol.saturating_mul(6))
-            .saturating_add(self.market_data_depth.saturating_mul(2).saturating_mul(96));
-        if maximum_frame > self.websocket_write_buffer {
+        if self.maximum_market_data_frame() > self.websocket_write_buffer {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "market-data frame does not fit configured WebSocket write buffer",
@@ -126,6 +131,43 @@ impl Config {
         Ok(())
     }
 }
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct MarketDataConfig {
+    pub depth: usize,
+    pub ring_capacity: usize,
+    pub connection_limit: usize,
+    pub websocket_write_timeout_ms: u64,
+    pub websocket_close_timeout_ms: u64,
+    pub websocket_ping_interval_ms: u64,
+    pub websocket_pong_timeout_ms: u64,
+    pub websocket_write_buffer: usize,
+    pub websocket_inbound_limit: usize,
+    pub maximum_frame_bytes: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct MarketDataSymbolMetrics {
+    pub subscribers_current: usize,
+    pub subscribers_high_water: usize,
+    pub sequence: u64,
+    pub logical_events: BTreeMap<String, u64>,
+    pub ring_sends_with_receivers: u64,
+    pub events_without_receivers: u64,
+    pub frames_written: BTreeMap<String, u64>,
+    pub frame_bytes_written: BTreeMap<String, u64>,
+}
+
+fn market_data_symbol_metrics() -> MarketDataSymbolMetrics {
+    let mut metrics = MarketDataSymbolMetrics::default();
+    for kind in ["trade", "bbo", "l2_snapshot"] {
+        metrics.logical_events.insert(kind.into(), 0);
+        metrics.frames_written.insert(kind.into(), 0);
+        metrics.frame_bytes_written.insert(kind.into(), 0);
+    }
+    metrics
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Metrics {
     pub requests: BTreeMap<String, u64>,
@@ -153,6 +195,13 @@ pub struct Metrics {
     pub market_data_lag_disconnects: u64,
     pub market_data_lagged_messages: u64,
     pub market_data_frames_written: u64,
+    pub market_data_upgrade_outcomes: BTreeMap<String, u64>,
+    pub market_data_symbols: BTreeMap<String, MarketDataSymbolMetrics>,
+    pub market_data_disconnects: BTreeMap<String, u64>,
+    pub market_data_forced_task_aborts: u64,
+    pub market_data_graceful_publisher_exits: u64,
+    pub market_data_abnormal_publisher_exits: u64,
+    pub market_data_config: MarketDataConfig,
 }
 enum Work {
     Command(EngineCommand),
@@ -265,18 +314,33 @@ impl Handle {
         while tasks.try_join_next().is_some() {}
         tasks.spawn(task);
     }
-    fn market_connection_opened(&self) {
+    fn market_connection_opened(&self, symbol: &Symbol) {
         let mut a = self.shared.admission.lock().unwrap();
         a.metrics.market_data_connections_current += 1;
         a.metrics.market_data_connections_high_water = a
             .metrics
             .market_data_connections_high_water
             .max(a.metrics.market_data_connections_current);
+        let metrics = a
+            .metrics
+            .market_data_symbols
+            .get_mut(symbol.as_str())
+            .expect("configured symbol metrics exist");
+        metrics.subscribers_current += 1;
+        metrics.subscribers_high_water = metrics
+            .subscribers_high_water
+            .max(metrics.subscribers_current);
     }
-    fn market_connection_closed(&self) {
+    fn market_connection_closed(&self, symbol: &Symbol) {
         let mut a = self.shared.admission.lock().unwrap();
         a.metrics.market_data_connections_current =
             a.metrics.market_data_connections_current.saturating_sub(1);
+        let metrics = a
+            .metrics
+            .market_data_symbols
+            .get_mut(symbol.as_str())
+            .expect("configured symbol metrics exist");
+        metrics.subscribers_current = metrics.subscribers_current.saturating_sub(1);
     }
     fn market_rejected(&self) {
         self.shared
@@ -285,6 +349,88 @@ impl Handle {
             .unwrap()
             .metrics
             .market_data_connections_rejected += 1;
+    }
+    fn market_upgrade_outcome(&self, status: u16, code: Option<&str>) {
+        let key = match code {
+            Some(code) => format!("{status}:{code}"),
+            None => status.to_string(),
+        };
+        *self
+            .shared
+            .admission
+            .lock()
+            .unwrap()
+            .metrics
+            .market_data_upgrade_outcomes
+            .entry(key)
+            .or_default() += 1;
+    }
+    fn market_publications(&self, symbol: &Symbol, publications: &[market::Publication]) {
+        let mut a = self.shared.admission.lock().unwrap();
+        let metrics = a
+            .metrics
+            .market_data_symbols
+            .get_mut(symbol.as_str())
+            .expect("configured symbol metrics exist");
+        for publication in publications {
+            metrics.sequence = publication.sequence;
+            *metrics
+                .logical_events
+                .entry(publication.kind.as_str().into())
+                .or_default() += 1;
+            if publication.receivers == 0 {
+                metrics.events_without_receivers += 1;
+            } else {
+                metrics.ring_sends_with_receivers += 1;
+            }
+        }
+    }
+    fn market_frame_written(&self, symbol: &Symbol, kind: market::RecordKind, bytes: usize) {
+        let mut a = self.shared.admission.lock().unwrap();
+        a.metrics.market_data_frames_written += 1;
+        let metrics = a
+            .metrics
+            .market_data_symbols
+            .get_mut(symbol.as_str())
+            .expect("configured symbol metrics exist");
+        *metrics
+            .frames_written
+            .entry(kind.as_str().into())
+            .or_default() += 1;
+        *metrics
+            .frame_bytes_written
+            .entry(kind.as_str().into())
+            .or_default() += u64::try_from(bytes).unwrap_or(u64::MAX);
+    }
+    fn market_disconnected(&self, reason: &'static str) {
+        *self
+            .shared
+            .admission
+            .lock()
+            .unwrap()
+            .metrics
+            .market_data_disconnects
+            .entry(reason.into())
+            .or_default() += 1;
+    }
+    fn market_forced_task_aborts(&self, count: usize) {
+        self.shared
+            .admission
+            .lock()
+            .unwrap()
+            .metrics
+            .market_data_forced_task_aborts += u64::try_from(count).unwrap_or(u64::MAX);
+    }
+}
+
+struct MarketConnection {
+    handle: Handle,
+    symbol: Symbol,
+}
+
+impl Drop for MarketConnection {
+    fn drop(&mut self) {
+        self.handle.market_connection_closed(&self.symbol);
     }
 }
 
@@ -306,11 +452,29 @@ impl Server {
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let (stop, _) = watch::channel(false);
         let (engine_exit, _) = watch::channel(EngineExit::Running);
+        let mut metrics = Metrics::default();
+        metrics.market_data_config = MarketDataConfig {
+            depth: config.market_data_depth,
+            ring_capacity: config.market_data_ring_capacity,
+            connection_limit: config.market_data_connections,
+            websocket_write_timeout_ms: duration_millis(config.websocket_write_timeout),
+            websocket_close_timeout_ms: duration_millis(config.websocket_close_timeout),
+            websocket_ping_interval_ms: duration_millis(config.websocket_ping_interval),
+            websocket_pong_timeout_ms: duration_millis(config.websocket_pong_timeout),
+            websocket_write_buffer: config.websocket_write_buffer,
+            websocket_inbound_limit: config.websocket_inbound_limit,
+            maximum_frame_bytes: config.maximum_market_data_frame(),
+        };
+        metrics.market_data_symbols = config
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.as_str().into(), market_data_symbol_metrics()))
+            .collect();
         let handle = Handle {
             shared: Arc::new(Shared {
                 admission: Mutex::new(Admission {
                     sender: Some(sender),
-                    metrics: Metrics::default(),
+                    metrics,
                 }),
                 stop,
                 permits: Arc::new(Semaphore::new(config.in_flight)),
@@ -353,6 +517,13 @@ impl Server {
                             .unwrap()
                             .metrics
                             .abnormal_engine_exits += 1;
+                        owner_handle
+                            .shared
+                            .admission
+                            .lock()
+                            .unwrap()
+                            .metrics
+                            .market_data_abnormal_publisher_exits += 1;
                         owner_handle
                             .shared
                             .engine_exit
@@ -440,7 +611,8 @@ fn engine_loop(
                     let snapshot = engine
                         .market_data_snapshot(symbol, handle.shared.market_depth)
                         .expect("successful command symbol exists");
-                    feeds.publish(symbol, &events, snapshot);
+                    let publications = feeds.publish(symbol, &events, snapshot);
+                    handle.market_publications(symbol, &publications);
                 }
                 let mut a = handle.shared.admission.lock().unwrap();
                 a.metrics.commands_completed += 1;
@@ -484,6 +656,13 @@ fn engine_loop(
         .unwrap()
         .metrics
         .graceful_engine_exits += 1;
+    handle
+        .shared
+        .admission
+        .lock()
+        .unwrap()
+        .metrics
+        .market_data_graceful_publisher_exits += 1;
 }
 async fn serve(
     listener: TcpListener,
@@ -512,8 +691,8 @@ async fn serve(
                 };
                 let h = handle.clone();
                 let mut stopping = h.shared.stop.subscribe();
+                let connection_permit = Arc::new(permit);
                 tasks.spawn(async move {
-                    let _permit = permit;
                     let service_handle = h.clone();
                     let mut builder = http1::Builder::new();
                     builder
@@ -523,7 +702,7 @@ async fn serve(
                         .timer(TokioTimer::new())
                         .header_read_timeout(Duration::from_secs(30));
                     let connection = builder
-                        .serve_connection(TokioIo::new(stream), service_fn(move |request| request_handler(request, service_handle.clone())))
+                        .serve_connection(TokioIo::new(stream), service_fn(move |request| request_handler(request, service_handle.clone(), connection_permit.clone())))
                         .with_upgrades();
                     tokio::pin!(connection);
                     let result = if *stopping.borrow() {
@@ -560,6 +739,7 @@ async fn serve(
     .await
     .is_err()
     {
+        handle.market_forced_task_aborts(websocket_tasks.len());
         websocket_tasks.abort_all();
         while websocket_tasks.join_next().await.is_some() {}
     }
@@ -601,6 +781,7 @@ fn route(request: &Request<Incoming>) -> Result<Route, Error> {
 async fn request_handler(
     mut request: Request<Incoming>,
     handle: Handle,
+    connection_permit: Arc<tokio::sync::OwnedSemaphorePermit>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let route = match route(&request) {
         Ok(r) => r,
@@ -613,6 +794,9 @@ async fn request_handler(
                     _ => Route::Delete,
                 };
                 handle.record(endpoint.name(), e.0, false);
+                if matches!(endpoint, Route::MarketData) {
+                    handle.market_upgrade_outcome(e.0, Some(e.1));
+                }
             }
             return Ok(error_response(e));
         }
@@ -623,19 +807,33 @@ async fn request_handler(
             Ok((symbol, subscription, permit, accept)) => {
                 let upgraded = hyper::upgrade::on(&mut request);
                 let task_handle = handle.clone();
-                task_handle.market_connection_opened();
+                handle.market_connection_opened(&symbol);
+                let connection = MarketConnection {
+                    handle: task_handle.clone(),
+                    symbol: symbol.clone(),
+                };
                 task_handle.clone().spawn_websocket(async move {
                     let _permit = permit;
-                    market_data_socket(upgraded, task_handle.clone(), symbol, subscription).await;
-                    task_handle.market_connection_closed();
+                    let connection = connection;
+                    market_data_socket(
+                        upgraded,
+                        task_handle.clone(),
+                        symbol.clone(),
+                        subscription,
+                        connection_permit,
+                    )
+                    .await;
+                    drop(connection);
                 });
                 handle.record(route.name(), 101, false);
+                handle.market_upgrade_outcome(101, None);
                 Ok(market_upgrade_response(&accept))
             }
             Err(error) => {
                 let overload =
                     error.1 == "ingress_overloaded" || error.1 == "market_data_overloaded";
                 handle.record(route.name(), error.0, overload);
+                handle.market_upgrade_outcome(error.0, Some(error.1));
                 Ok(error_response(error))
             }
         };
@@ -859,14 +1057,16 @@ fn websocket_accept(request: &Request<Incoming>) -> Result<String, Error> {
         return Err(MALFORMED);
     }
     let decoded = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
-    let protocols: Vec<_> = request
-        .headers()
-        .get_all("sec-websocket-protocol")
-        .iter()
-        .flat_map(|value| value.to_str().ok().into_iter())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .collect();
+    let mut protocols = Vec::new();
+    for value in request.headers().get_all("sec-websocket-protocol").iter() {
+        protocols.extend(
+            value
+                .to_str()
+                .map_err(|_| MALFORMED)?
+                .split(',')
+                .map(str::trim),
+        );
+    }
     if protocols.len() != 1 || protocols[0] != MARKET_DATA_PROTOCOL {
         return Err(Error(400, "unsupported_subprotocol"));
     }
@@ -880,6 +1080,7 @@ async fn market_data_socket(
     handle: Handle,
     symbol: Symbol,
     mut subscription: market::Subscription,
+    _connection_permit: Arc<tokio::sync::OwnedSemaphorePermit>,
 ) {
     let Ok(upgraded) = upgraded.await else {
         return;
@@ -903,6 +1104,7 @@ async fn market_data_socket(
     ) {
         Ok(frame) => frame,
         Err(_) => {
+            handle.market_disconnected("serialization");
             close_socket(
                 &mut socket,
                 CloseCode::Error,
@@ -913,12 +1115,12 @@ async fn market_data_socket(
             return;
         }
     };
-    if send_text(&mut socket, initial, limits.write_timeout)
-        .await
-        .is_err()
-    {
+    let initial_bytes = initial.len();
+    if let Err(failure) = send_text(&mut socket, initial, limits.write_timeout).await {
+        handle.market_disconnected(failure.reason());
         return;
     }
+    handle.market_frame_written(&symbol, market::RecordKind::L2, initial_bytes);
     let mut engine_exit = handle.shared.engine_exit.subscribe();
     let mut heartbeat = interval(limits.ping_interval);
     heartbeat.tick().await;
@@ -930,14 +1132,18 @@ async fn market_data_socket(
                     let frame = match market::event_json(&handle.shared.stream_id, &symbol, handle.shared.market_depth, &event) {
                         Ok(frame) => frame,
                         Err(_) => {
+                            handle.market_disconnected("serialization");
                             close_socket(&mut socket, CloseCode::Error, "serialization_failure", limits.close_timeout).await;
                             return;
                         }
                     };
-                    if send_text(&mut socket, frame, limits.write_timeout).await.is_err() {
+                    let kind = event.record.kind();
+                    let bytes = frame.len();
+                    if let Err(failure) = send_text(&mut socket, frame, limits.write_timeout).await {
+                        handle.market_disconnected(failure.reason());
                         return;
                     }
-                    handle.shared.admission.lock().unwrap().metrics.market_data_frames_written += 1;
+                    handle.market_frame_written(&symbol, kind, bytes);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
                     {
@@ -945,38 +1151,58 @@ async fn market_data_socket(
                         metrics.metrics.market_data_lag_disconnects += 1;
                         metrics.metrics.market_data_lagged_messages += missed;
                     }
+                    handle.market_disconnected("lag");
                     close_socket(&mut socket, CloseCode::Again, "resync_required", limits.close_timeout).await;
                     return;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    let (code, reason) = match engine_exit_reason(&mut engine_exit).await {
-                        EngineExit::Abnormal => (CloseCode::Error, "internal_error"),
+                    let (code, reason, metric_reason) = match engine_exit_reason(&mut engine_exit).await {
+                        EngineExit::Abnormal => (CloseCode::Error, "internal_error", "abnormal_engine"),
                         EngineExit::Graceful | EngineExit::Running => {
-                            (CloseCode::Away, "server_shutdown")
+                            (CloseCode::Away, "server_shutdown", "shutdown")
                         }
                     };
+                    handle.market_disconnected(metric_reason);
                     close_socket(&mut socket, code, reason, limits.close_timeout).await;
                     return;
                 }
             },
             inbound = socket.next() => match inbound {
                 Some(Ok(WsMessage::Ping(payload))) => {
-                    if timeout(limits.write_timeout, socket.send(WsMessage::Pong(payload))).await.is_err() { return; }
+                    if let Err(failure) = send_message(&mut socket, WsMessage::Pong(payload), limits.write_timeout).await {
+                        handle.market_disconnected(failure.reason());
+                        return;
+                    }
                 }
                 Some(Ok(WsMessage::Pong(_))) => last_pong = Instant::now(),
-                Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => return,
+                Some(Ok(WsMessage::Close(_))) | None => {
+                    handle.market_disconnected("peer_closed");
+                    return;
+                }
+                Some(Err(_)) => {
+                    handle.market_disconnected("peer_io");
+                    return;
+                }
                 Some(Ok(WsMessage::Text(_))) | Some(Ok(WsMessage::Binary(_))) => {
+                    handle.market_disconnected("protocol");
                     close_socket(&mut socket, CloseCode::Policy, "read_only", limits.close_timeout).await;
                     return;
                 }
-                Some(Ok(_)) => return,
+                Some(Ok(_)) => {
+                    handle.market_disconnected("protocol");
+                    return;
+                }
             },
             _ = heartbeat.tick() => {
                 if last_pong.elapsed() >= limits.pong_timeout {
+                    handle.market_disconnected("heartbeat");
                     close_socket(&mut socket, CloseCode::Policy, "pong_timeout", limits.close_timeout).await;
                     return;
                 }
-                if timeout(limits.write_timeout, socket.send(WsMessage::Ping(Vec::new()))).await.is_err() { return; }
+                if let Err(failure) = send_message(&mut socket, WsMessage::Ping(Vec::new()), limits.write_timeout).await {
+                    handle.market_disconnected(failure.reason());
+                    return;
+                }
             },
         }
     }
@@ -994,15 +1220,43 @@ async fn engine_exit_reason(engine_exit: &mut watch::Receiver<EngineExit>) -> En
     }
 }
 
+enum WriteFailure {
+    Timeout,
+    BufferFull,
+    PeerIo,
+}
+
+impl WriteFailure {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::Timeout => "write_timeout",
+            Self::BufferFull => "write_buffer_full",
+            Self::PeerIo => "peer_io",
+        }
+    }
+}
+
 async fn send_text(
     socket: &mut UpgradedSocket,
     text: String,
     timeout_limit: Duration,
-) -> Result<(), ()> {
-    timeout(timeout_limit, socket.send(WsMessage::Text(text)))
-        .await
-        .map_err(|_| ())?
-        .map_err(|_| ())
+) -> Result<(), WriteFailure> {
+    send_message(socket, WsMessage::Text(text), timeout_limit).await
+}
+
+async fn send_message(
+    socket: &mut UpgradedSocket,
+    message: WsMessage,
+    timeout_limit: Duration,
+) -> Result<(), WriteFailure> {
+    match timeout(timeout_limit, socket.send(message)).await {
+        Err(_) => Err(WriteFailure::Timeout),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(tokio_tungstenite::tungstenite::Error::WriteBufferFull(_))) => {
+            Err(WriteFailure::BufferFull)
+        }
+        Ok(Err(_)) => Err(WriteFailure::PeerIo),
+    }
 }
 
 async fn close_socket(
@@ -1047,7 +1301,7 @@ mod tests {
     use futures_util::SinkExt;
     use hyper::{Method, StatusCode, client::conn::http1};
     use tokio::{
-        io::AsyncWriteExt,
+        io::{AsyncReadExt, AsyncWriteExt},
         net::TcpStream,
         time::{Duration, timeout},
     };
@@ -1453,17 +1707,101 @@ mod tests {
         assert_eq!(status, StatusCode::UPGRADE_REQUIRED);
         assert_eq!(body["error"]["code"], "upgrade_required");
 
-        let mut request = format!("ws://{}/market-data?symbol=BTC-USD", server.address)
-            .into_client_request()
+        let mut malformed = TcpStream::connect(server.address).await.unwrap();
+        malformed
+            .write_all(
+                b"GET /market-data?symbol=BTC-USD HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: trade-rs.market-data.v1\r\nSec-WebSocket-Protocol: \xff\r\n\r\n",
+            )
+            .await
             .unwrap();
-        request
-            .headers_mut()
-            .insert("sec-websocket-protocol", "wrong".parse().unwrap());
-        assert!(connect_async(request).await.is_err());
+        let mut response = [0; 128];
+        let size = timeout(Duration::from_secs(1), malformed.read(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&response[..size])
+                .unwrap()
+                .starts_with("HTTP/1.1 400")
+        );
         let metrics = server.handle.metrics();
         assert_eq!(metrics.market_data_barriers_admitted, 0);
         assert_eq!(metrics.market_data_connections_current, 0);
+        assert_eq!(
+            metrics.market_data_upgrade_outcomes["400:malformed_request"],
+            1
+        );
         server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upgraded_socket_holds_the_total_connection_permit() {
+        let server = Server::start(
+            Config {
+                listen: "127.0.0.1:0".parse().unwrap(),
+                symbols: vec![Symbol::new("BTC-USD")],
+                queue_capacity: 4,
+                in_flight: 4,
+                body_limit: 16 * 1024,
+                connections: 1,
+                market_data_connections: 1,
+                ..Config::default()
+            },
+            EngineHooks::default(),
+        )
+        .await
+        .unwrap();
+        let _socket = websocket(server.address, "BTC-USD").await;
+        let mut rejected = TcpStream::connect(server.address).await.unwrap();
+        rejected
+            .write_all(b"GET /book?symbol=BTC-USD HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut byte = [0];
+        match timeout(Duration::from_secs(1), rejected.read(&mut byte)).await {
+            Ok(Ok(0) | Err(_)) => {}
+            result => panic!("expected rejected TCP connection, got {result:?}"),
+        }
+        wait_for(&server.handle, |metrics| metrics.connections_rejected == 1).await;
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn market_data_metrics_reconcile_publications_and_delivery() {
+        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let mut socket = websocket(server.address, "BTC-USD").await;
+        assert_eq!(next_json(&mut socket).await["sequence"], 0);
+        assert_eq!(
+            request(
+                server.address,
+                Method::POST,
+                "/orders",
+                ORDER.replace("%d", "91"),
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(next_json(&mut socket).await["sequence"], 1);
+        assert_eq!(next_json(&mut socket).await["sequence"], 2);
+
+        let metrics = server.shutdown().await.unwrap();
+        let symbol = metrics.market_data_symbols.get("BTC-USD").unwrap();
+        assert_eq!(metrics.market_data_upgrade_outcomes["101"], 1);
+        assert_eq!(metrics.market_data_config.ring_capacity, 8);
+        assert!(metrics.market_data_config.maximum_frame_bytes > 0);
+        assert_eq!(symbol.subscribers_current, 0);
+        assert_eq!(symbol.subscribers_high_water, 1);
+        assert_eq!(symbol.sequence, 2);
+        assert_eq!(symbol.logical_events["bbo"], 1);
+        assert_eq!(symbol.logical_events["l2_snapshot"], 1);
+        assert_eq!(symbol.ring_sends_with_receivers, 2);
+        assert_eq!(symbol.events_without_receivers, 0);
+        assert_eq!(symbol.frames_written["bbo"], 1);
+        assert_eq!(symbol.frames_written["l2_snapshot"], 2);
+        assert!(symbol.frame_bytes_written["l2_snapshot"] > 0);
+        assert_eq!(metrics.market_data_disconnects["shutdown"], 1);
+        assert_eq!(metrics.market_data_graceful_publisher_exits, 1);
     }
 
     #[tokio::test]
