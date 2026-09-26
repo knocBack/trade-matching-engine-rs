@@ -75,11 +75,9 @@ argues for a binary protocol on persistent connections when we hit it.
 - [axum-socket-backpressure](https://crates.io/crates/axum-socket-backpressure) - makes a subtle and important point: `Sink::send` means "the sink accepted the frame" and `flush` means "internal buffers drained to the transport." Neither means the bytes left the kernel send buffer, nor that the peer is reading. A kernel-send-queue watchdog is a far better slow-consumer detector than any application heuristic.
 - [Handling 5000 websocket connections with axum](https://github.com/tokio-rs/axum/discussions/3087) - a useful failure. They stored `SplitSink` in a global `DashMap`; writing to a sink held under a map guard serialises the fanout and lets one slow socket block every other. The anti-pattern to avoid: give each connection its own task and its own channel.
 
-**The design consequence for market data:** `broadcast` *drops* for slow receivers
-(`RecvError::Lagged`); bounded `mpsc` *blocks*. For market data, dropping is correct -
-a stale tick has no value - but `Lagged` must be handled explicitly by resynchronising
-the client with a fresh snapshot, never silently ignored. This is why M4 carries
-sequence numbers: they turn a silent gap into a detectable one.
+**Protocol decision:** the authoritative M4 bounded-fanout, gap-detection, and
+reconnection contract is [the M4 requirement](requirements/M4.md). These sources provide
+background rationale, not a competing transport design.
 
 ---
 

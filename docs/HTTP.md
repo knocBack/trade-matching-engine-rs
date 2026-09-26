@@ -12,6 +12,11 @@ The schema references to an M2 amendment in the architecture are already fulfill
 by the stacked M2 branch. M3 exports its existing event JSON encoder, without
 changing the M2 tape format or matching engine.
 
+The requirements-only M4 follow-on is [requirements/M4.md](requirements/M4.md). It
+defines the future `GET /market-data?symbol=...` WebSocket upgrade and deliberately
+leaves this M3 `GET /book` API unchanged. No M4 runtime endpoint is claimed by this
+document until its separate implementation ships.
+
 ## Configuration and finite resources
 
 | Flag | Default | Meaning |
