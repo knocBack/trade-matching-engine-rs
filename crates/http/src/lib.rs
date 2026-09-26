@@ -1016,27 +1016,16 @@ fn websocket_accept(request: &Request<Incoming>) -> Result<String, Error> {
     {
         return Err(MALFORMED);
     }
-    let upgrade = request
-        .headers()
-        .get(hyper::header::UPGRADE)
-        .and_then(|value| value.to_str().ok());
-    let connection = request
-        .headers()
-        .get(hyper::header::CONNECTION)
-        .and_then(|value| value.to_str().ok());
-    if upgrade.is_none() || connection.is_none() {
+    let upgrade = header_tokens(request, "upgrade")?;
+    let connection = header_tokens(request, "connection")?;
+    if upgrade.is_empty() || connection.is_empty() {
         return Err(Error(426, "upgrade_required"));
     }
-    let Some(upgrade) = upgrade else {
-        unreachable!()
-    };
-    let Some(connection) = connection else {
-        unreachable!()
-    };
-    if !upgrade.eq_ignore_ascii_case("websocket")
+    if upgrade.len() != 1
+        || !upgrade[0].eq_ignore_ascii_case("websocket")
         || !connection
-            .split(',')
-            .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+            .iter()
+            .any(|token| token.eq_ignore_ascii_case("upgrade"))
     {
         return Err(MALFORMED);
     }
@@ -1057,20 +1046,49 @@ fn websocket_accept(request: &Request<Incoming>) -> Result<String, Error> {
         return Err(MALFORMED);
     }
     let decoded = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
-    let mut protocols = Vec::new();
-    for value in request.headers().get_all("sec-websocket-protocol").iter() {
-        protocols.extend(
-            value
-                .to_str()
-                .map_err(|_| MALFORMED)?
-                .split(',')
-                .map(str::trim),
-        );
-    }
+    let protocols = header_tokens(request, "sec-websocket-protocol")?;
     if protocols.len() != 1 || protocols[0] != MARKET_DATA_PROTOCOL {
         return Err(Error(400, "unsupported_subprotocol"));
     }
     Ok(decoded)
+}
+
+fn header_tokens<'a>(
+    request: &'a Request<Incoming>,
+    name: &'static str,
+) -> Result<Vec<&'a str>, Error> {
+    let mut tokens = Vec::new();
+    for value in request.headers().get_all(name).iter() {
+        for token in value.to_str().map_err(|_| MALFORMED)?.split(',') {
+            let token = token.trim();
+            if token.is_empty() || !token.bytes().all(is_http_token) {
+                return Err(MALFORMED);
+            }
+            tokens.push(token);
+        }
+    }
+    Ok(tokens)
+}
+
+fn is_http_token(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
 }
 
 type UpgradedSocket = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
@@ -1710,7 +1728,7 @@ mod tests {
         let mut malformed = TcpStream::connect(server.address).await.unwrap();
         malformed
             .write_all(
-                b"GET /market-data?symbol=BTC-USD HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: trade-rs.market-data.v1\r\nSec-WebSocket-Protocol: \xff\r\n\r\n",
+                b"GET /market-data?symbol=BTC-USD HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade, @\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Protocol: trade-rs.market-data.v1\r\n\r\n",
             )
             .await
             .unwrap();
