@@ -44,6 +44,8 @@ docs/
   DELIVERY.md       how work ships: roles, PR contract, merge authority
   PLAN-REVISION-REQUIREMENTS.md  written requirements for this documentation revision
   PLAN-REVISION-SCENARIOS.md     independently authored scenarios for this revision
+  requirements/      milestone requirement contracts
+  scenarios/         independently authored milestone scenarios
   RESOURCES.md      gathered source material, with what each one settles
   adr/              architecture decision records
   reference/        PRD and the ABIDES papers
@@ -71,7 +73,8 @@ finite limits, graceful drain and benchmark reproduction.
 ## Market-data contract (M4)
 
 The normative pre-implementation WebSocket v1 contract is
-[docs/requirements/M4.md](docs/requirements/M4.md). It specifies a one-symbol feed,
-per-process stream identity, per-symbol contiguous sequences, initial L2 baseline,
+[docs/requirements/M4.md](docs/requirements/M4.md); its independent acceptance inventory
+is [docs/scenarios/M4.md](docs/scenarios/M4.md). Together they specify a one-symbol
+feed, per-process stream identity, per-symbol contiguous sequences, initial L2 baseline,
 reconnect-only resynchronisation, and bounded slow-consumer disconnection. Runtime
 implementation is intentionally deferred to its own PR.

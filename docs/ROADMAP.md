@@ -61,8 +61,9 @@ sequence number so a consumer can detect it missed something and resynchronise.
 Slow consumers get dropped, not buffered forever.
 
 The pre-implementation v1 protocol, sequence, resynchronisation, bounded-buffer, and
-shutdown contract is [requirements/M4.md](requirements/M4.md). One connection covers
-one symbol; reconnect plus a fresh initial L2 snapshot is the recovery boundary.
+shutdown contract is [requirements/M4.md](requirements/M4.md); its independently
+authored acceptance scenarios are [scenarios/M4.md](scenarios/M4.md). One connection
+covers one symbol; reconnect plus a fresh initial L2 snapshot is the recovery boundary.
 **Ships:** a live feed.
 
 ### M5a · The simulator workload and timing instrumentation
