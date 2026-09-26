@@ -452,24 +452,26 @@ impl Server {
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let (stop, _) = watch::channel(false);
         let (engine_exit, _) = watch::channel(EngineExit::Running);
-        let mut metrics = Metrics::default();
-        metrics.market_data_config = MarketDataConfig {
-            depth: config.market_data_depth,
-            ring_capacity: config.market_data_ring_capacity,
-            connection_limit: config.market_data_connections,
-            websocket_write_timeout_ms: duration_millis(config.websocket_write_timeout),
-            websocket_close_timeout_ms: duration_millis(config.websocket_close_timeout),
-            websocket_ping_interval_ms: duration_millis(config.websocket_ping_interval),
-            websocket_pong_timeout_ms: duration_millis(config.websocket_pong_timeout),
-            websocket_write_buffer: config.websocket_write_buffer,
-            websocket_inbound_limit: config.websocket_inbound_limit,
-            maximum_frame_bytes: config.maximum_market_data_frame(),
+        let metrics = Metrics {
+            market_data_config: MarketDataConfig {
+                depth: config.market_data_depth,
+                ring_capacity: config.market_data_ring_capacity,
+                connection_limit: config.market_data_connections,
+                websocket_write_timeout_ms: duration_millis(config.websocket_write_timeout),
+                websocket_close_timeout_ms: duration_millis(config.websocket_close_timeout),
+                websocket_ping_interval_ms: duration_millis(config.websocket_ping_interval),
+                websocket_pong_timeout_ms: duration_millis(config.websocket_pong_timeout),
+                websocket_write_buffer: config.websocket_write_buffer,
+                websocket_inbound_limit: config.websocket_inbound_limit,
+                maximum_frame_bytes: config.maximum_market_data_frame(),
+            },
+            market_data_symbols: config
+                .symbols
+                .iter()
+                .map(|symbol| (symbol.as_str().into(), market_data_symbol_metrics()))
+                .collect(),
+            ..Default::default()
         };
-        metrics.market_data_symbols = config
-            .symbols
-            .iter()
-            .map(|symbol| (symbol.as_str().into(), market_data_symbol_metrics()))
-            .collect();
         let handle = Handle {
             shared: Arc::new(Shared {
                 admission: Mutex::new(Admission {
