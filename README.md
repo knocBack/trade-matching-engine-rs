@@ -4,9 +4,10 @@ A deterministic, high-throughput matching engine and agent-based market simulato
 
 ## What this is
 
-An in-memory Central Limit Order Book (CLOB) with strict price-time priority, an order
-ingestion API, a WebSocket market-data feed, and asynchronous persistence to PostgreSQL -
-driven by a synthetic agent population modelled on the ABIDES simulation framework.
+An in-memory Central Limit Order Book (CLOB) with strict price-time priority and an
+order-ingestion API, driven by a synthetic agent population modelled on the ABIDES
+simulation framework. WebSocket market data and asynchronous PostgreSQL persistence are
+planned later milestones, not current runtime surfaces.
 
 The longer-term PRD budget is sustained 15,000-20,000 orders/sec, sub-millisecond
 median matching latency, p99 under 5 ms, and stable memory. It is not the first HTTP
