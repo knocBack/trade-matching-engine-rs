@@ -16,7 +16,7 @@ connection errors, generator-capacity misses, or outstanding requests at the cut
 | `run-01` | 0.464167 | 0.688292 | 0.868833 | 4.194584 | 125.184916 | 60 |
 | `run-02` | 0.456125 | 0.694291 | 0.887959 | 3.467875 | 101.325916 | 29 |
 | `run-03` | 0.479292 | 0.531875 | 0.558333 | 0.678750 | 23.116375 | 23 |
-| Combined raw samples (180,000) | 0.473417 | 0.631458 | 0.757625 | 2.532750 | 125.184916 | 60 (maximum) |
+| Combined measurement samples (180,000) | 0.473417 | 0.631458 | 0.757625 | 2.532750 | 125.184916 | 60 (maximum) |
 
 The complete per-run outcome counts, per-endpoint/per-mix percentile tables, offered
 response times, scheduling lag, warm-up results, server counters, environment, and
