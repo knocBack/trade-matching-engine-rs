@@ -15,6 +15,7 @@ pub(crate) struct Error(pub u16, pub &'static str);
 pub(crate) const MALFORMED: Error = Error(400, "malformed_request");
 pub(crate) const UNAVAILABLE: Error = Error(503, "service_unavailable");
 pub(crate) const OVERLOADED: Error = Error(503, "ingress_overloaded");
+pub(crate) const MARKET_OVERLOADED: Error = Error(503, "market_data_overloaded");
 
 struct Fields(BTreeMap<String, Box<RawValue>>);
 impl<'de> Deserialize<'de> for Fields {

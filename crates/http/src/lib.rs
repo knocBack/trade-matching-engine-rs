@@ -1,6 +1,9 @@
 //! Bounded HTTP/1.1 adapter. The engine lives only on its dedicated owner thread.
+mod market;
 mod wire;
 use bytes::Bytes;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, body::Incoming, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
@@ -18,10 +21,21 @@ use tokio::{
     net::TcpListener,
     sync::{Semaphore, mpsc, oneshot, watch},
     task::{JoinHandle, JoinSet},
+    time::{Instant, interval, timeout},
+};
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{
+        Message as WsMessage,
+        protocol::{CloseFrame, Role, WebSocketConfig, frame::coding::CloseCode},
+    },
 };
 use trade_orderbook::{BookSnapshot, CommandError, OrderId, Symbol};
 use trade_replay::{Engine, EngineCommand, EngineEvent};
-use wire::{Error, MALFORMED, OVERLOADED, UNAVAILABLE};
+use uuid::Uuid;
+use wire::{Error, MALFORMED, MARKET_OVERLOADED, OVERLOADED, UNAVAILABLE};
+
+const MARKET_DATA_PROTOCOL: &str = "trade-rs.market-data.v1";
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -31,6 +45,15 @@ pub struct Config {
     pub in_flight: usize,
     pub body_limit: usize,
     pub connections: usize,
+    pub market_data_depth: usize,
+    pub market_data_ring_capacity: usize,
+    pub market_data_connections: usize,
+    pub websocket_write_timeout: Duration,
+    pub websocket_close_timeout: Duration,
+    pub websocket_ping_interval: Duration,
+    pub websocket_pong_timeout: Duration,
+    pub websocket_write_buffer: usize,
+    pub websocket_inbound_limit: usize,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -41,6 +64,15 @@ impl Default for Config {
             in_flight: 512,
             body_limit: 16 * 1024,
             connections: 1024,
+            market_data_depth: 20,
+            market_data_ring_capacity: 1024,
+            market_data_connections: 128,
+            websocket_write_timeout: Duration::from_secs(1),
+            websocket_close_timeout: Duration::from_secs(1),
+            websocket_ping_interval: Duration::from_secs(15),
+            websocket_pong_timeout: Duration::from_secs(30),
+            websocket_write_buffer: 64 * 1024,
+            websocket_inbound_limit: 1024,
         }
     }
 }
@@ -51,6 +83,17 @@ impl Config {
             || self.connections == 0
             || self.body_limit == 0
             || self.body_limit > 16 * 1024
+            || !(1..=100).contains(&self.market_data_depth)
+            || self.market_data_ring_capacity == 0
+            || !self.market_data_ring_capacity.is_power_of_two()
+            || self.market_data_connections == 0
+            || self.market_data_connections > self.connections
+            || self.websocket_write_timeout.is_zero()
+            || self.websocket_close_timeout.is_zero()
+            || self.websocket_ping_interval.is_zero()
+            || self.websocket_pong_timeout <= self.websocket_ping_interval
+            || self.websocket_write_buffer == 0
+            || self.websocket_inbound_limit == 0
             || [self.queue_capacity, self.in_flight, self.connections]
                 .iter()
                 .any(|&v| v > Semaphore::MAX_PERMITS)
@@ -59,7 +102,24 @@ impl Config {
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "positive finite limits and nonempty symbols required; body <= 16384",
+                "invalid finite HTTP or market-data limits",
+            ));
+        }
+        let max_symbol = self
+            .symbols
+            .iter()
+            .map(|s| s.as_str().len())
+            .max()
+            .unwrap_or(0);
+        // The escaped symbol can take six bytes per input byte. This conservative
+        // bound covers a depth-100 L2 frame with i64 prices and u128 quantities.
+        let maximum_frame = 512_usize
+            .saturating_add(max_symbol.saturating_mul(6))
+            .saturating_add(self.market_data_depth.saturating_mul(2).saturating_mul(96));
+        if maximum_frame > self.websocket_write_buffer {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "market-data frame does not fit configured WebSocket write buffer",
             ));
         }
         Ok(())
@@ -83,14 +143,25 @@ pub struct Metrics {
     pub connections_rejected: u64,
     pub graceful_engine_exits: u64,
     pub abnormal_engine_exits: u64,
+    pub market_data_connections_current: usize,
+    pub market_data_connections_high_water: usize,
+    pub market_data_connections_rejected: u64,
+    pub market_data_barriers_admitted: u64,
+    pub market_data_barriers_completed: u64,
+    pub market_data_barriers_rejected: u64,
+    pub market_data_lag_disconnects: u64,
+    pub market_data_lagged_messages: u64,
+    pub market_data_frames_written: u64,
 }
 enum Work {
     Command(EngineCommand),
     Snapshot(Symbol),
+    Subscribe(Symbol),
 }
 enum Completed {
     Events(Vec<EngineEvent>),
     Snapshot(Result<BookSnapshot, CommandError>),
+    Subscription(Result<market::Subscription, CommandError>),
 }
 struct Message {
     work: Work,
@@ -106,7 +177,22 @@ struct Shared {
     admission: Mutex<Admission>,
     stop: watch::Sender<bool>,
     permits: Arc<Semaphore>,
+    market_permits: Arc<Semaphore>,
     body_limit: usize,
+    stream_id: String,
+    market_depth: usize,
+    websocket: WebSocketLimits,
+    websocket_tasks: Mutex<Vec<JoinHandle<()>>>,
+}
+
+#[derive(Clone, Copy)]
+struct WebSocketLimits {
+    write_timeout: Duration,
+    close_timeout: Duration,
+    ping_interval: Duration,
+    pong_timeout: Duration,
+    write_buffer: usize,
+    inbound_limit: usize,
 }
 #[derive(Clone)]
 pub struct Handle {
@@ -126,6 +212,7 @@ impl Handle {
     fn admit(&self, work: Work) -> Result<oneshot::Receiver<Completed>, Error> {
         let (reply, receive) = oneshot::channel();
         let is_command = matches!(work, Work::Command(_));
+        let is_subscription = matches!(work, Work::Subscribe(_));
         let mut state = self.shared.admission.lock().unwrap();
         let Some(sender) = &state.sender else {
             return Err(UNAVAILABLE);
@@ -138,6 +225,8 @@ impl Handle {
                 m.queue_high_water = m.queue_high_water.max(m.queue_current);
                 if is_command {
                     m.commands_admitted += 1;
+                } else if is_subscription {
+                    m.market_data_barriers_admitted += 1;
                 } else {
                     m.snapshots_admitted += 1;
                 }
@@ -158,6 +247,30 @@ impl Handle {
             .entry(format!("{route}:{status}"))
             .or_default() += 1;
         a.metrics.overload += u64::from(overload);
+    }
+    fn spawn_websocket(&self, task: JoinHandle<()>) {
+        self.shared.websocket_tasks.lock().unwrap().push(task);
+    }
+    fn market_connection_opened(&self) {
+        let mut a = self.shared.admission.lock().unwrap();
+        a.metrics.market_data_connections_current += 1;
+        a.metrics.market_data_connections_high_water = a
+            .metrics
+            .market_data_connections_high_water
+            .max(a.metrics.market_data_connections_current);
+    }
+    fn market_connection_closed(&self) {
+        let mut a = self.shared.admission.lock().unwrap();
+        a.metrics.market_data_connections_current =
+            a.metrics.market_data_connections_current.saturating_sub(1);
+    }
+    fn market_rejected(&self) {
+        self.shared
+            .admission
+            .lock()
+            .unwrap()
+            .metrics
+            .market_data_connections_rejected += 1;
     }
 }
 
@@ -186,15 +299,32 @@ impl Server {
                 }),
                 stop,
                 permits: Arc::new(Semaphore::new(config.in_flight)),
+                market_permits: Arc::new(Semaphore::new(config.market_data_connections)),
                 body_limit: config.body_limit,
+                stream_id: Uuid::new_v4().to_string(),
+                market_depth: config.market_data_depth,
+                websocket: WebSocketLimits {
+                    write_timeout: config.websocket_write_timeout,
+                    close_timeout: config.websocket_close_timeout,
+                    ping_interval: config.websocket_ping_interval,
+                    pong_timeout: config.websocket_pong_timeout,
+                    write_buffer: config.websocket_write_buffer,
+                    inbound_limit: config.websocket_inbound_limit,
+                },
+                websocket_tasks: Mutex::new(Vec::new()),
             }),
         };
+        let feeds = market::Feeds::new(
+            &config.symbols,
+            config.market_data_depth,
+            config.market_data_ring_capacity,
+        );
         let owner_handle = handle.clone();
         let owner = thread::Builder::new()
             .name("trade-engine".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    engine_loop(engine, receiver, &owner_handle, hooks)
+                    engine_loop(engine, receiver, &owner_handle, hooks, feeds)
                 }));
                 if result.is_err() {
                     owner_handle
@@ -255,6 +385,7 @@ fn engine_loop(
     mut receiver: mpsc::Receiver<Message>,
     handle: &Handle,
     hooks: EngineHooks,
+    mut feeds: market::Feeds,
 ) {
     let mut index = 0u64;
     loop {
@@ -273,6 +404,20 @@ fn engine_loop(
             Work::Command(command) => {
                 index = index.checked_add(1).expect("command index exhausted");
                 let events = engine.handle(index, command);
+                let rejected = matches!(events.last(), Some(EngineEvent::CommandRejected { .. }));
+                if !rejected {
+                    let symbol = events
+                        .last()
+                        .and_then(|event| match event {
+                            EngineEvent::CommandCompleted { symbol, .. } => Some(symbol),
+                            _ => None,
+                        })
+                        .expect("successful command completes");
+                    let snapshot = engine
+                        .snapshot(symbol)
+                        .expect("successful command symbol exists");
+                    feeds.publish(symbol, &events, snapshot);
+                }
                 let mut a = handle.shared.admission.lock().unwrap();
                 a.metrics.commands_completed += 1;
                 if let Some(EngineEvent::CommandRejected { reason, .. }) = events.last() {
@@ -289,6 +434,21 @@ fn engine_loop(
                 a.metrics.snapshots_completed += 1;
                 a.metrics.snapshots_rejected += u64::from(result.is_err());
                 Completed::Snapshot(result)
+            }
+            Work::Subscribe(symbol) => {
+                let result = match engine.snapshot(&symbol) {
+                    Ok(snapshot) => {
+                        // The owner alone replaces the cached projection before the
+                        // receiver is created, so the barrier has no snapshot/live race.
+                        let _ = snapshot;
+                        Ok(feeds.subscribe(&symbol).expect("configured feed exists"))
+                    }
+                    Err(error) => Err(error),
+                };
+                let mut a = handle.shared.admission.lock().unwrap();
+                a.metrics.market_data_barriers_completed += 1;
+                a.metrics.market_data_barriers_rejected += u64::from(result.is_err());
+                Completed::Subscription(result)
             }
         };
         if message.reply.send(completed).is_err() {
@@ -346,7 +506,9 @@ async fn serve(
                         .max_headers(64)
                         .timer(TokioTimer::new())
                         .header_read_timeout(Duration::from_secs(30));
-                    let connection = builder.serve_connection(TokioIo::new(stream), service_fn(move |request| request_handler(request, service_handle.clone())));
+                    let connection = builder
+                        .serve_connection(TokioIo::new(stream), service_fn(move |request| request_handler(request, service_handle.clone())))
+                        .with_upgrades();
                     tokio::pin!(connection);
                     let result = if *stopping.borrow() {
                         connection.as_mut().graceful_shutdown();
@@ -368,6 +530,16 @@ async fn serve(
     drop(listener);
     handle.shutdown();
     while tasks.join_next().await.is_some() {}
+    let websocket_tasks = std::mem::take(&mut *handle.shared.websocket_tasks.lock().unwrap());
+    for mut task in websocket_tasks {
+        if timeout(handle.shared.websocket.close_timeout, &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+            let _ = task.await;
+        }
+    }
     tokio::task::spawn_blocking(move || owner.join())
         .await
         .map_err(io::Error::other)?
@@ -382,6 +554,7 @@ enum Route {
     Post,
     Delete,
     Book,
+    MarketData,
 }
 impl Route {
     fn name(self) -> &'static str {
@@ -389,6 +562,7 @@ impl Route {
             Self::Post => "POST /orders",
             Self::Delete => "DELETE /orders/:id",
             Self::Book => "GET /book",
+            Self::MarketData => "GET /market-data",
         }
     }
 }
@@ -396,6 +570,7 @@ fn route(request: &Request<Incoming>) -> Result<Route, Error> {
     let expected = match request.uri().path() {
         "/orders" => ("POST", Route::Post),
         "/book" => ("GET", Route::Book),
+        "/market-data" => ("GET", Route::MarketData),
         p if p.starts_with("/orders/") && !p[8..].contains('/') => ("DELETE", Route::Delete),
         _ => return Err(Error(404, "route_not_found")),
     };
@@ -405,7 +580,7 @@ fn route(request: &Request<Incoming>) -> Result<Route, Error> {
     Ok(expected.1)
 }
 async fn request_handler(
-    request: Request<Incoming>,
+    mut request: Request<Incoming>,
     handle: Handle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let route = match route(&request) {
@@ -415,6 +590,7 @@ async fn request_handler(
                 let endpoint = match request.uri().path() {
                     "/orders" => Route::Post,
                     "/book" => Route::Book,
+                    "/market-data" => Route::MarketData,
                     _ => Route::Delete,
                 };
                 handle.record(endpoint.name(), e.0, false);
@@ -422,6 +598,32 @@ async fn request_handler(
             return Ok(error_response(e));
         }
     };
+    if matches!(route, Route::MarketData) {
+        let outcome = process_market_data(&request, &handle).await;
+        return match outcome {
+            Ok((symbol, subscription, permit, accept)) => {
+                let upgraded = hyper::upgrade::on(&mut request);
+                let task_handle = handle.clone();
+                task_handle.market_connection_opened();
+                task_handle
+                    .clone()
+                    .spawn_websocket(tokio::spawn(async move {
+                        let _permit = permit;
+                        market_data_socket(upgraded, task_handle.clone(), symbol, subscription)
+                            .await;
+                        task_handle.market_connection_closed();
+                    }));
+                handle.record(route.name(), 101, false);
+                Ok(market_upgrade_response(&accept))
+            }
+            Err(error) => {
+                let overload =
+                    error.1 == "ingress_overloaded" || error.1 == "market_data_overloaded";
+                handle.record(route.name(), error.0, overload);
+                Ok(error_response(error))
+            }
+        };
+    }
     let outcome = process(request, route, &handle).await;
     let (status, body, overload) = match outcome {
         Ok((status, body)) => (status, body, false),
@@ -512,6 +714,7 @@ async fn process(
             }
             Work::Snapshot(wire::query(request.uri().query())?)
         }
+        Route::MarketData => unreachable!("market-data upgrades are handled before HTTP bodies"),
     };
     let receive = handle.admit(work)?;
     // After admission there is deliberately no timeout or shutdown cancellation.
@@ -519,11 +722,271 @@ async fn process(
         Ok(Completed::Events(events)) => Ok(wire::events(&events)),
         Ok(Completed::Snapshot(Ok(book))) => Ok((200, wire::snapshot(book).to_string())),
         Ok(Completed::Snapshot(Err(reason))) => Err(wire::domain(reason)),
+        Ok(Completed::Subscription(_)) => unreachable!("HTTP work has HTTP completion"),
         Err(_) => {
             handle.shutdown();
             Err(Error(500, "completion_unavailable"))
         }
     }
+}
+
+fn market_upgrade_response(accept: &str) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(101)
+        .header(hyper::header::CONNECTION, "Upgrade")
+        .header(hyper::header::UPGRADE, "websocket")
+        .header("sec-websocket-accept", accept)
+        .header("sec-websocket-protocol", MARKET_DATA_PROTOCOL)
+        .body(Full::new(Bytes::new()))
+        .unwrap()
+}
+
+async fn process_market_data(
+    request: &Request<Incoming>,
+    handle: &Handle,
+) -> Result<
+    (
+        Symbol,
+        market::Subscription,
+        tokio::sync::OwnedSemaphorePermit,
+        String,
+    ),
+    Error,
+> {
+    if handle.unavailable() {
+        return Err(UNAVAILABLE);
+    }
+    let symbol = wire::query(request.uri().query())?;
+    let accept = websocket_accept(request)?;
+    let permit = match handle.shared.market_permits.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            handle.market_rejected();
+            return Err(MARKET_OVERLOADED);
+        }
+    };
+    let receive = match handle.admit(Work::Subscribe(symbol.clone())) {
+        Ok(receive) => receive,
+        Err(error) => {
+            if error.1 == "ingress_overloaded" {
+                handle
+                    .shared
+                    .admission
+                    .lock()
+                    .unwrap()
+                    .metrics
+                    .market_data_barriers_rejected += 1;
+            }
+            return Err(error);
+        }
+    };
+    match receive.await {
+        Ok(Completed::Subscription(Ok(subscription))) => Ok((symbol, subscription, permit, accept)),
+        Ok(Completed::Subscription(Err(reason))) => Err(wire::domain(reason)),
+        Err(_) => Err(UNAVAILABLE),
+        Ok(_) => unreachable!("subscription work has subscription completion"),
+    }
+}
+
+fn websocket_accept(request: &Request<Incoming>) -> Result<String, Error> {
+    if request.method() != hyper::Method::GET {
+        return Err(Error(405, "method_not_allowed"));
+    }
+    if request
+        .headers()
+        .contains_key(hyper::header::TRANSFER_ENCODING)
+        || request
+            .headers()
+            .get(hyper::header::CONTENT_LENGTH)
+            .is_some_and(|value| value != "0")
+    {
+        return Err(MALFORMED);
+    }
+    let upgrade = request
+        .headers()
+        .get(hyper::header::UPGRADE)
+        .and_then(|value| value.to_str().ok());
+    let connection = request
+        .headers()
+        .get(hyper::header::CONNECTION)
+        .and_then(|value| value.to_str().ok());
+    if upgrade.is_none() || connection.is_none() {
+        return Err(Error(426, "upgrade_required"));
+    }
+    let Some(upgrade) = upgrade else {
+        unreachable!()
+    };
+    let Some(connection) = connection else {
+        unreachable!()
+    };
+    if !upgrade.eq_ignore_ascii_case("websocket")
+        || !connection
+            .split(',')
+            .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+    {
+        return Err(MALFORMED);
+    }
+    let version = request
+        .headers()
+        .get("sec-websocket-version")
+        .and_then(|value| value.to_str().ok());
+    let key = request
+        .headers()
+        .get("sec-websocket-key")
+        .and_then(|value| value.to_str().ok());
+    let (Some("13"), Some(key)) = (version, key) else {
+        return Err(MALFORMED);
+    };
+    if STANDARD.decode(key).map_or(true, |decoded| decoded.len() != 16) {
+        return Err(MALFORMED);
+    }
+    let decoded = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+    let protocols: Vec<_> = request
+        .headers()
+        .get_all("sec-websocket-protocol")
+        .iter()
+        .flat_map(|value| value.to_str().ok().into_iter())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .collect();
+    if protocols.len() != 1 || protocols[0] != MARKET_DATA_PROTOCOL {
+        return Err(Error(400, "unsupported_subprotocol"));
+    }
+    Ok(decoded)
+}
+
+type UpgradedSocket = WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>;
+
+async fn market_data_socket(
+    upgraded: hyper::upgrade::OnUpgrade,
+    handle: Handle,
+    symbol: Symbol,
+    mut subscription: market::Subscription,
+) {
+    let Ok(upgraded) = upgraded.await else {
+        return;
+    };
+    let limits = handle.shared.websocket;
+    let config = WebSocketConfig {
+        max_write_buffer_size: limits.write_buffer,
+        max_message_size: Some(limits.inbound_limit),
+        max_frame_size: Some(limits.inbound_limit),
+        ..WebSocketConfig::default()
+    };
+    let mut socket =
+        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Server, Some(config)).await;
+    let initial = match market::initial_json(
+        &handle.shared.stream_id,
+        &symbol,
+        subscription.sequence,
+        handle.shared.market_depth,
+        &subscription.projection,
+    ) {
+        Ok(frame) => frame,
+        Err(_) => {
+            close_socket(
+                &mut socket,
+                CloseCode::Error,
+                "serialization_failure",
+                limits.close_timeout,
+            )
+            .await;
+            return;
+        }
+    };
+    if send_text(&mut socket, initial, limits.write_timeout)
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let mut stopping = handle.shared.stop.subscribe();
+    let mut heartbeat = interval(limits.ping_interval);
+    heartbeat.tick().await;
+    let mut last_pong = Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            _ = stopping.changed() => {
+                close_socket(&mut socket, CloseCode::Away, "server_shutdown", limits.close_timeout).await;
+                return;
+            }
+            received = subscription.receiver.recv() => match received {
+                Ok(event) => {
+                    let frame = match market::event_json(&handle.shared.stream_id, &symbol, handle.shared.market_depth, &event) {
+                        Ok(frame) => frame,
+                        Err(_) => {
+                            close_socket(&mut socket, CloseCode::Error, "serialization_failure", limits.close_timeout).await;
+                            return;
+                        }
+                    };
+                    if send_text(&mut socket, frame, limits.write_timeout).await.is_err() {
+                        return;
+                    }
+                    handle.shared.admission.lock().unwrap().metrics.market_data_frames_written += 1;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                    {
+                        let mut metrics = handle.shared.admission.lock().unwrap();
+                        metrics.metrics.market_data_lag_disconnects += 1;
+                        metrics.metrics.market_data_lagged_messages += missed;
+                    }
+                    close_socket(&mut socket, CloseCode::Again, "resync_required", limits.close_timeout).await;
+                    return;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    close_socket(&mut socket, CloseCode::Away, "server_shutdown", limits.close_timeout).await;
+                    return;
+                }
+            },
+            inbound = socket.next() => match inbound {
+                Some(Ok(WsMessage::Ping(payload))) => {
+                    if timeout(limits.write_timeout, socket.send(WsMessage::Pong(payload))).await.is_err() { return; }
+                }
+                Some(Ok(WsMessage::Pong(_))) => last_pong = Instant::now(),
+                Some(Ok(WsMessage::Close(_))) | None | Some(Err(_)) => return,
+                Some(Ok(WsMessage::Text(_))) | Some(Ok(WsMessage::Binary(_))) => {
+                    close_socket(&mut socket, CloseCode::Policy, "read_only", limits.close_timeout).await;
+                    return;
+                }
+                Some(Ok(_)) => return,
+            },
+            _ = heartbeat.tick() => {
+                if last_pong.elapsed() >= limits.pong_timeout {
+                    close_socket(&mut socket, CloseCode::Policy, "pong_timeout", limits.close_timeout).await;
+                    return;
+                }
+                if timeout(limits.write_timeout, socket.send(WsMessage::Ping(Vec::new().into()))).await.is_err() { return; }
+            },
+        }
+    }
+}
+
+async fn send_text(
+    socket: &mut UpgradedSocket,
+    text: String,
+    timeout_limit: Duration,
+) -> Result<(), ()> {
+    timeout(timeout_limit, socket.send(WsMessage::Text(text.into())))
+        .await
+        .map_err(|_| ())?
+        .map_err(|_| ())
+}
+
+async fn close_socket(
+    socket: &mut UpgradedSocket,
+    code: CloseCode,
+    reason: &'static str,
+    timeout_limit: Duration,
+) {
+    let _ = timeout(
+        timeout_limit,
+        socket.send(WsMessage::Close(Some(CloseFrame {
+            code,
+            reason: reason.into(),
+        }))),
+    )
+    .await;
 }
 fn response(status: u16, body: String) -> Response<Full<Bytes>> {
     Response::builder()
@@ -570,6 +1033,7 @@ mod tests {
             in_flight: 4,
             body_limit: 16 * 1024,
             connections: 8,
+            ..Config::default()
         };
         let server = Server::start(
             config,
