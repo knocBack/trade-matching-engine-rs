@@ -45,12 +45,12 @@ HTTP `POST /orders`, `DELETE /orders/:id`, `GET /book`. A bounded channel betwee
 the web layer and the engine thread. Bounded on purpose: an unbounded queue hides
 overload until it becomes an out-of-memory kill.
 
-M3 measures client-observed HTTP-wall latency and establishes the initial co-located
+M3 measures client-observed HTTP-wall latency and establishes the current co-located
 baseline in [BENCHMARK.md](BENCHMARK.md): 500 offered order-command HTTP requests per
-second with p90 at or below one second. If the channel cannot accept a command,
+second with p90 at or below one second. The qualifying three-run observed HTTP-wall
+and load-generator evidence is indexed there. If the channel cannot accept a command,
 ingress rejects it immediately without waiting; this plan does not choose a response
-status. M3 replaces or revises the initial definition using observed HTTP-wall and
-load-generator evidence.
+status.
 
 **Ships:** a server you can curl, its first measured ingestion baseline, and explicit
 overload evidence.

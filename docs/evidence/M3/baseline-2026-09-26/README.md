@@ -2,8 +2,8 @@
 
 ## Result
 
-The three fresh release-profile loopback runs below demonstrate the provisional M3
-gate: **500 offered `POST`/`DELETE` command attempts per second** with client-observed
+The three fresh release-profile loopback runs below demonstrate the current M3
+baseline gate: **500 offered `POST`/`DELETE` command attempts per second** with client-observed
 HTTP-wall p90 below **1,000 ms**. This is a measured baseline only. It is not a
 maximum-QPS result, a high-throughput claim, or evidence of overload behavior.
 

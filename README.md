@@ -11,7 +11,7 @@ planned later milestones, not current runtime surfaces.
 
 The longer-term PRD budget is sustained 15,000-20,000 orders/sec, sub-millisecond
 median matching latency, p99 under 5 ms, and stable memory. It is not the first HTTP
-benchmark gate: the deliberately modest, provisional M3 baseline is recorded in
+benchmark gate: the deliberately modest M3 baseline is recorded in
 [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf).
@@ -23,7 +23,7 @@ deterministic offline replay, and the bounded HTTP adapter. The requirements-onl
 WebSocket market-data contract is now defined for a separate implementation PR; no M4
 runtime endpoint is claimed yet. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone sequence,
-[docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark contract, and
+[docs/BENCHMARK.md](docs/BENCHMARK.md) for the current M3 benchmark baseline, and
 [docs/adr/](docs/adr/) for the decision record.
 
 ## How this repo is built
@@ -41,7 +41,7 @@ us revisit it. Performance claims ship with before/after numbers.
 ```
 docs/
   ROADMAP.md        milestone sequence
-  BENCHMARK.md      provisional benchmark contract
+  BENCHMARK.md      current M3 benchmark baseline
   DELIVERY.md       how work ships: roles, PR contract, merge authority
   PLAN-REVISION-REQUIREMENTS.md  written requirements for this documentation revision
   PLAN-REVISION-SCENARIOS.md     independently authored scenarios for this revision

@@ -106,7 +106,7 @@ python3 docs/evidence/M3/benchmark.py --rate 1000 --warmup 0 --duration 5 --outp
 
 Raw CSV times are monotonic seconds relative to the first scheduled offer.
 HTTP-wall is full response read minus dispatch; offered response time includes
-scheduling lag. All attempted responses count in the provisional p90, with missing
+scheduling lag. All attempted responses count in the current baseline p90, with missing
 and rejection fractions shown separately. The harness drains its dispatched tasks
 before final snapshots and SIGTERM; final server counters include preload and
 warmup, and the report subtracts preload explicitly. No debug per-request logging,
