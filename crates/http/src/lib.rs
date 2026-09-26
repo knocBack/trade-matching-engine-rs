@@ -184,6 +184,7 @@ struct Shared {
     market_depth: usize,
     websocket: WebSocketLimits,
     websocket_tasks: Mutex<JoinSet<()>>,
+    engine_exit: watch::Sender<EngineExit>,
 }
 
 #[derive(Clone, Copy)]
@@ -194,6 +195,13 @@ struct WebSocketLimits {
     pong_timeout: Duration,
     write_buffer: usize,
     inbound_limit: usize,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum EngineExit {
+    Running,
+    Graceful,
+    Abnormal,
 }
 #[derive(Clone)]
 pub struct Handle {
@@ -297,6 +305,7 @@ impl Server {
         let address = listener.local_addr()?;
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let (stop, _) = watch::channel(false);
+        let (engine_exit, _) = watch::channel(EngineExit::Running);
         let handle = Handle {
             shared: Arc::new(Shared {
                 admission: Mutex::new(Admission {
@@ -318,13 +327,10 @@ impl Server {
                     inbound_limit: config.websocket_inbound_limit,
                 },
                 websocket_tasks: Mutex::new(JoinSet::new()),
+                engine_exit,
             }),
         };
-        let feeds = market::Feeds::new(
-            &config.symbols,
-            config.market_data_depth,
-            config.market_data_ring_capacity,
-        );
+        let feeds = market::Feeds::new(&config.symbols, config.market_data_ring_capacity);
         let owner_handle = handle.clone();
         let owner = thread::Builder::new()
             .name("trade-engine".into())
@@ -332,15 +338,27 @@ impl Server {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     engine_loop(engine, receiver, &owner_handle, hooks, feeds)
                 }));
-                if result.is_err() {
-                    owner_handle
-                        .shared
-                        .admission
-                        .lock()
-                        .unwrap()
-                        .metrics
-                        .abnormal_engine_exits += 1;
-                    owner_handle.shutdown();
+                match result {
+                    Ok(()) => {
+                        owner_handle
+                            .shared
+                            .engine_exit
+                            .send_replace(EngineExit::Graceful);
+                    }
+                    Err(_) => {
+                        owner_handle
+                            .shared
+                            .admission
+                            .lock()
+                            .unwrap()
+                            .metrics
+                            .abnormal_engine_exits += 1;
+                        owner_handle
+                            .shared
+                            .engine_exit
+                            .send_replace(EngineExit::Abnormal);
+                        owner_handle.shutdown();
+                    }
                 }
             })?;
         let serve_handle = handle.clone();
@@ -420,7 +438,7 @@ fn engine_loop(
                         })
                         .expect("successful command completes");
                     let snapshot = engine
-                        .snapshot(symbol)
+                        .market_data_snapshot(symbol, handle.shared.market_depth)
                         .expect("successful command symbol exists");
                     feeds.publish(symbol, &events, snapshot);
                 }
@@ -442,15 +460,7 @@ fn engine_loop(
                 Completed::Snapshot(result)
             }
             Work::Subscribe(symbol) => {
-                let result = match engine.snapshot(&symbol) {
-                    Ok(snapshot) => {
-                        // The owner alone replaces the cached projection before the
-                        // receiver is created, so the barrier has no snapshot/live race.
-                        let _ = snapshot;
-                        Ok(feeds.subscribe(&symbol).expect("configured feed exists"))
-                    }
-                    Err(error) => Err(error),
-                };
+                let result = feeds.subscribe(&symbol).ok_or(CommandError::UnknownSymbol);
                 let mut a = handle.shared.admission.lock().unwrap();
                 a.metrics.market_data_barriers_completed += 1;
                 a.metrics.market_data_barriers_rejected += u64::from(result.is_err());
@@ -536,6 +546,10 @@ async fn serve(
     drop(listener);
     handle.shutdown();
     while tasks.join_next().await.is_some() {}
+    tokio::task::spawn_blocking(move || owner.join())
+        .await
+        .map_err(io::Error::other)?
+        .map_err(|_| io::Error::other("engine join failed"))?;
     let mut websocket_tasks = std::mem::replace(
         &mut *handle.shared.websocket_tasks.lock().unwrap(),
         JoinSet::new(),
@@ -549,10 +563,6 @@ async fn serve(
         websocket_tasks.abort_all();
         while websocket_tasks.join_next().await.is_some() {}
     }
-    tokio::task::spawn_blocking(move || owner.join())
-        .await
-        .map_err(io::Error::other)?
-        .map_err(|_| io::Error::other("engine join failed"))?;
     if let Some(error) = failure {
         return Err(error);
     }
@@ -909,17 +919,12 @@ async fn market_data_socket(
     {
         return;
     }
-    let mut stopping = handle.shared.stop.subscribe();
+    let mut engine_exit = handle.shared.engine_exit.subscribe();
     let mut heartbeat = interval(limits.ping_interval);
     heartbeat.tick().await;
     let mut last_pong = Instant::now();
     loop {
         tokio::select! {
-            biased;
-            _ = stopping.changed() => {
-                close_socket(&mut socket, CloseCode::Away, "server_shutdown", limits.close_timeout).await;
-                return;
-            }
             received = subscription.receiver.recv() => match received {
                 Ok(event) => {
                     let frame = match market::event_json(&handle.shared.stream_id, &symbol, handle.shared.market_depth, &event) {
@@ -944,7 +949,13 @@ async fn market_data_socket(
                     return;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    close_socket(&mut socket, CloseCode::Away, "server_shutdown", limits.close_timeout).await;
+                    let (code, reason) = match engine_exit_reason(&mut engine_exit).await {
+                        EngineExit::Abnormal => (CloseCode::Error, "internal_error"),
+                        EngineExit::Graceful | EngineExit::Running => {
+                            (CloseCode::Away, "server_shutdown")
+                        }
+                    };
+                    close_socket(&mut socket, code, reason, limits.close_timeout).await;
                     return;
                 }
             },
@@ -967,6 +978,18 @@ async fn market_data_socket(
                 }
                 if timeout(limits.write_timeout, socket.send(WsMessage::Ping(Vec::new()))).await.is_err() { return; }
             },
+        }
+    }
+}
+
+async fn engine_exit_reason(engine_exit: &mut watch::Receiver<EngineExit>) -> EngineExit {
+    loop {
+        let reason = *engine_exit.borrow_and_update();
+        if reason != EngineExit::Running {
+            return reason;
+        }
+        if engine_exit.changed().await.is_err() {
+            return EngineExit::Abnormal;
         }
     }
 }
@@ -1043,6 +1066,14 @@ mod tests {
         let (lock, cond) = &**control;
         lock.lock().unwrap().0 = false;
         cond.notify_all();
+    }
+
+    fn pause(control: &EngineControl) {
+        control.0.lock().unwrap().0 = true;
+    }
+
+    fn fail_next(control: &EngineControl) {
+        control.0.lock().unwrap().1 = true;
     }
 
     async fn server(queue_capacity: usize) -> (Server, EngineControl) {
@@ -1240,6 +1271,84 @@ mod tests {
         assert_eq!(metrics.commands_admitted, 1);
         assert_eq!(metrics.commands_completed, 1);
         assert_eq!(metrics.graceful_engine_exits, 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_flushes_admitted_market_data_before_closing_sockets() {
+        let (server, control) = server(4).await;
+        resume(&control);
+        let mut socket = websocket(server.address, "BTC-USD").await;
+        assert_eq!(next_json(&mut socket).await["sequence"], 0);
+
+        pause(&control);
+        assert_eq!(
+            request(
+                server.address,
+                Method::GET,
+                "/book?symbol=BTC-USD",
+                String::new(),
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let handle = server.handle.clone();
+        let pending = tokio::spawn(request(
+            server.address,
+            Method::POST,
+            "/orders",
+            ORDER.replace("%d", "72"),
+        ));
+        wait_for(&handle, |metrics| metrics.commands_admitted == 1).await;
+        let draining = tokio::spawn(server.shutdown());
+        resume(&control);
+
+        assert_eq!(pending.await.unwrap().0, StatusCode::OK);
+        assert_eq!(next_json(&mut socket).await["sequence"], 1);
+        assert_eq!(next_json(&mut socket).await["sequence"], 2);
+        assert_eq!(draining.await.unwrap().unwrap().commands_completed, 1);
+    }
+
+    #[tokio::test]
+    async fn abnormal_engine_exit_closes_market_data_with_internal_error() {
+        let (server, control) = server(4).await;
+        resume(&control);
+        let mut socket = websocket(server.address, "BTC-USD").await;
+        assert_eq!(next_json(&mut socket).await["sequence"], 0);
+
+        pause(&control);
+        assert_eq!(
+            request(
+                server.address,
+                Method::GET,
+                "/book?symbol=BTC-USD",
+                String::new(),
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let pending = tokio::spawn(request(
+            server.address,
+            Method::POST,
+            "/orders",
+            ORDER.replace("%d", "73"),
+        ));
+        wait_for(&server.handle, |metrics| metrics.commands_admitted == 1).await;
+        fail_next(&control);
+        resume(&control);
+
+        let close = timeout(Duration::from_secs(1), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            close,
+            ClientMessage::Close(Some(frame)) if frame.code == CloseCode::Error
+        ));
+        assert_eq!(pending.await.unwrap().0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(server.wait().await.unwrap().abnormal_engine_exits, 1);
     }
 
     #[tokio::test]

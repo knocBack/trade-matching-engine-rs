@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use serde_json::json;
 use tokio::sync::broadcast;
-use trade_orderbook::{BookSnapshot, Symbol};
+use trade_orderbook::{MarketDataSnapshot, Symbol};
 use trade_replay::EngineEvent;
 
 /// Immutable engine-produced data. JSON encoding deliberately happens only in the
@@ -53,12 +53,11 @@ pub(crate) struct Feed {
 }
 
 pub(crate) struct Feeds {
-    depth: usize,
     by_symbol: BTreeMap<Symbol, Feed>,
 }
 
 impl Feeds {
-    pub(crate) fn new(symbols: &[Symbol], depth: usize, capacity: usize) -> Self {
+    pub(crate) fn new(symbols: &[Symbol], capacity: usize) -> Self {
         let by_symbol = symbols
             .iter()
             .cloned()
@@ -77,7 +76,7 @@ impl Feeds {
                 )
             })
             .collect();
-        Self { depth, by_symbol }
+        Self { by_symbol }
     }
 
     pub(crate) fn subscribe(&mut self, symbol: &Symbol) -> Option<Subscription> {
@@ -95,14 +94,13 @@ impl Feeds {
         &mut self,
         symbol: &Symbol,
         events: &[EngineEvent],
-        snapshot: BookSnapshot,
+        snapshot: MarketDataSnapshot,
     ) -> usize {
-        let depth = self.depth;
         let feed = self
             .by_symbol
             .get_mut(symbol)
             .expect("configured symbol exists");
-        let next_projection = projection(snapshot, depth);
+        let next_projection = projection(snapshot);
         let mut count = 0;
         for event in events {
             if let EngineEvent::TradeExecuted {
@@ -156,18 +154,13 @@ fn bbo(projection: &Projection) -> (Option<Level>, Option<Level>) {
     )
 }
 
-pub(crate) fn projection(snapshot: BookSnapshot, depth: usize) -> Projection {
-    let levels = |levels: Vec<trade_orderbook::PriceLevelSnapshot>| {
+pub(crate) fn projection(snapshot: MarketDataSnapshot) -> Projection {
+    let levels = |levels: Vec<trade_orderbook::MarketDataLevel>| {
         levels
             .into_iter()
-            .take(depth)
             .map(|level| Level {
                 price_ticks: level.price.0,
-                quantity: level.orders.into_iter().fold(0_u128, |total, order| {
-                    total
-                        .checked_add(u128::from(order.remaining.0))
-                        .expect("price-level aggregate exceeds u128")
-                }),
+                quantity: level.quantity,
             })
             .collect()
     };
@@ -255,7 +248,7 @@ mod tests {
     #[test]
     fn lagged_receiver_is_terminally_detectable() {
         let symbol = Symbol::new("BTC-USD");
-        let mut feeds = Feeds::new(std::slice::from_ref(&symbol), 1, 2);
+        let mut feeds = Feeds::new(std::slice::from_ref(&symbol), 2);
         let mut subscription = feeds.subscribe(&symbol).unwrap();
         for quantity in 1..=4 {
             feeds
