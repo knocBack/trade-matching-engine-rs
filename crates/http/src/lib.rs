@@ -1,8 +1,8 @@
 //! Bounded HTTP/1.1 adapter. The engine lives only on its dedicated owner thread.
 mod market;
 mod wire;
-use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response, body::Incoming, server::conn::http1, service::service_fn};
@@ -11,6 +11,7 @@ use serde::Serialize;
 use std::{
     collections::BTreeMap,
     convert::Infallible,
+    future::Future,
     io,
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -92,7 +93,7 @@ impl Config {
             || self.websocket_close_timeout.is_zero()
             || self.websocket_ping_interval.is_zero()
             || self.websocket_pong_timeout <= self.websocket_ping_interval
-            || self.websocket_write_buffer == 0
+            || self.websocket_write_buffer < 2
             || self.websocket_inbound_limit == 0
             || [self.queue_capacity, self.in_flight, self.connections]
                 .iter()
@@ -182,7 +183,7 @@ struct Shared {
     stream_id: String,
     market_depth: usize,
     websocket: WebSocketLimits,
-    websocket_tasks: Mutex<Vec<JoinHandle<()>>>,
+    websocket_tasks: Mutex<JoinSet<()>>,
 }
 
 #[derive(Clone, Copy)]
@@ -248,8 +249,13 @@ impl Handle {
             .or_default() += 1;
         a.metrics.overload += u64::from(overload);
     }
-    fn spawn_websocket(&self, task: JoinHandle<()>) {
-        self.shared.websocket_tasks.lock().unwrap().push(task);
+    fn spawn_websocket<F>(&self, task: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let mut tasks = self.shared.websocket_tasks.lock().unwrap();
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(task);
     }
     fn market_connection_opened(&self) {
         let mut a = self.shared.admission.lock().unwrap();
@@ -311,7 +317,7 @@ impl Server {
                     write_buffer: config.websocket_write_buffer,
                     inbound_limit: config.websocket_inbound_limit,
                 },
-                websocket_tasks: Mutex::new(Vec::new()),
+                websocket_tasks: Mutex::new(JoinSet::new()),
             }),
         };
         let feeds = market::Feeds::new(
@@ -530,15 +536,18 @@ async fn serve(
     drop(listener);
     handle.shutdown();
     while tasks.join_next().await.is_some() {}
-    let websocket_tasks = std::mem::take(&mut *handle.shared.websocket_tasks.lock().unwrap());
-    for mut task in websocket_tasks {
-        if timeout(handle.shared.websocket.close_timeout, &mut task)
-            .await
-            .is_err()
-        {
-            task.abort();
-            let _ = task.await;
-        }
+    let mut websocket_tasks = std::mem::replace(
+        &mut *handle.shared.websocket_tasks.lock().unwrap(),
+        JoinSet::new(),
+    );
+    if timeout(handle.shared.websocket.close_timeout, async {
+        while websocket_tasks.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        websocket_tasks.abort_all();
+        while websocket_tasks.join_next().await.is_some() {}
     }
     tokio::task::spawn_blocking(move || owner.join())
         .await
@@ -605,14 +614,11 @@ async fn request_handler(
                 let upgraded = hyper::upgrade::on(&mut request);
                 let task_handle = handle.clone();
                 task_handle.market_connection_opened();
-                task_handle
-                    .clone()
-                    .spawn_websocket(tokio::spawn(async move {
-                        let _permit = permit;
-                        market_data_socket(upgraded, task_handle.clone(), symbol, subscription)
-                            .await;
-                        task_handle.market_connection_closed();
-                    }));
+                task_handle.clone().spawn_websocket(async move {
+                    let _permit = permit;
+                    market_data_socket(upgraded, task_handle.clone(), symbol, subscription).await;
+                    task_handle.market_connection_closed();
+                });
                 handle.record(route.name(), 101, false);
                 Ok(market_upgrade_response(&accept))
             }
@@ -826,18 +832,20 @@ fn websocket_accept(request: &Request<Incoming>) -> Result<String, Error> {
     {
         return Err(MALFORMED);
     }
-    let version = request
-        .headers()
-        .get("sec-websocket-version")
-        .and_then(|value| value.to_str().ok());
-    let key = request
-        .headers()
-        .get("sec-websocket-key")
-        .and_then(|value| value.to_str().ok());
+    let single_header = |name| {
+        let mut values = request.headers().get_all(name).iter();
+        let value = values.next()?.to_str().ok()?;
+        values.next().is_none().then_some(value)
+    };
+    let version = single_header("sec-websocket-version");
+    let key = single_header("sec-websocket-key");
     let (Some("13"), Some(key)) = (version, key) else {
         return Err(MALFORMED);
     };
-    if STANDARD.decode(key).map_or(true, |decoded| decoded.len() != 16) {
+    if STANDARD
+        .decode(key)
+        .map_or(true, |decoded| decoded.len() != 16)
+    {
         return Err(MALFORMED);
     }
     let decoded = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
@@ -868,6 +876,7 @@ async fn market_data_socket(
     };
     let limits = handle.shared.websocket;
     let config = WebSocketConfig {
+        write_buffer_size: (limits.write_buffer / 2).min(8 * 1024),
         max_write_buffer_size: limits.write_buffer,
         max_message_size: Some(limits.inbound_limit),
         max_frame_size: Some(limits.inbound_limit),
@@ -956,7 +965,7 @@ async fn market_data_socket(
                     close_socket(&mut socket, CloseCode::Policy, "pong_timeout", limits.close_timeout).await;
                     return;
                 }
-                if timeout(limits.write_timeout, socket.send(WsMessage::Ping(Vec::new().into()))).await.is_err() { return; }
+                if timeout(limits.write_timeout, socket.send(WsMessage::Ping(Vec::new()))).await.is_err() { return; }
             },
         }
     }
@@ -967,7 +976,7 @@ async fn send_text(
     text: String,
     timeout_limit: Duration,
 ) -> Result<(), ()> {
-    timeout(timeout_limit, socket.send(WsMessage::Text(text.into())))
+    timeout(timeout_limit, socket.send(WsMessage::Text(text)))
         .await
         .map_err(|_| ())?
         .map_err(|_| ())
@@ -996,20 +1005,32 @@ fn response(status: u16, body: String) -> Response<Full<Bytes>> {
         .unwrap()
 }
 fn error_response(error: Error) -> Response<Full<Bytes>> {
-    response(
-        error.0,
-        serde_json::json!({"error":{"code":error.1}}).to_string(),
-    )
+    let mut builder = Response::builder()
+        .status(error.0)
+        .header(hyper::header::CONTENT_TYPE, "application/json");
+    if error.1 == "upgrade_required" {
+        builder = builder.header(hyper::header::UPGRADE, "websocket");
+    }
+    builder
+        .body(Full::new(Bytes::from(
+            serde_json::json!({"error":{"code":error.1}}).to_string(),
+        )))
+        .unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::SinkExt;
     use hyper::{Method, StatusCode, client::conn::http1};
     use tokio::{
         io::AsyncWriteExt,
         net::TcpStream,
         time::{Duration, timeout},
+    };
+    use tokio_tungstenite::{
+        MaybeTlsStream, connect_async,
+        tungstenite::{Message as ClientMessage, client::IntoClientRequest},
     };
 
     const ORDER: &str = r#"{"type":"limit","symbol":"BTC-USD","order_id":%d,"owner_id":7,"side":"buy","price_ticks":100,"quantity":1}"#;
@@ -1033,6 +1054,7 @@ mod tests {
             in_flight: 4,
             body_limit: 16 * 1024,
             connections: 8,
+            market_data_connections: 8,
             ..Config::default()
         };
         let server = Server::start(
@@ -1044,6 +1066,56 @@ mod tests {
         .await
         .unwrap();
         (server, control)
+    }
+
+    async fn running_server(symbols: Vec<Symbol>, ring_capacity: usize) -> Server {
+        Server::start(
+            Config {
+                listen: "127.0.0.1:0".parse().unwrap(),
+                symbols,
+                queue_capacity: 32,
+                in_flight: 32,
+                body_limit: 16 * 1024,
+                connections: 16,
+                market_data_connections: 8,
+                market_data_ring_capacity: ring_capacity,
+                ..Config::default()
+            },
+            EngineHooks::default(),
+        )
+        .await
+        .unwrap()
+    }
+
+    type ClientSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+    async fn websocket(address: SocketAddr, symbol: &str) -> ClientSocket {
+        let mut request = format!("ws://{address}/market-data?symbol={symbol}")
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            MARKET_DATA_PROTOCOL.parse().unwrap(),
+        );
+        let (socket, response) = connect_async(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(
+            response.headers().get("sec-websocket-protocol").unwrap(),
+            MARKET_DATA_PROTOCOL
+        );
+        socket
+    }
+
+    async fn next_json(socket: &mut ClientSocket) -> serde_json::Value {
+        let frame = timeout(Duration::from_secs(1), socket.next())
+            .await
+            .expect("market-data frame before timeout")
+            .expect("open websocket")
+            .expect("valid websocket frame");
+        let ClientMessage::Text(text) = frame else {
+            panic!("expected JSON text frame, got {frame:?}");
+        };
+        serde_json::from_str(&text).unwrap()
     }
 
     async fn request(
@@ -1168,5 +1240,172 @@ mod tests {
         assert_eq!(metrics.commands_admitted, 1);
         assert_eq!(metrics.commands_completed, 1);
         assert_eq!(metrics.graceful_engine_exits, 1);
+    }
+
+    #[tokio::test]
+    async fn market_data_upgrade_initial_snapshot_and_publication_order() {
+        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let mut socket = websocket(server.address, "BTC-USD").await;
+        let initial = next_json(&mut socket).await;
+        assert_eq!(initial["type"], "l2_snapshot");
+        assert_eq!(initial["reason"], "initial");
+        assert_eq!(initial["sequence"], 0);
+        assert_eq!(initial["depth"], 20);
+        assert_eq!(initial["bids"], serde_json::json!([]));
+        assert_eq!(initial["asks"], serde_json::json!([]));
+
+        let (status, _) = request(
+            server.address,
+            Method::POST,
+            "/orders",
+            ORDER.replace("%d", "1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let bbo = next_json(&mut socket).await;
+        let l2 = next_json(&mut socket).await;
+        assert_eq!(bbo["type"], "bbo");
+        assert_eq!(bbo["sequence"], 1);
+        assert_eq!(l2["type"], "l2_snapshot");
+        assert_eq!(l2["reason"], "update");
+        assert_eq!(l2["sequence"], 2);
+
+        let sell = r#"{"type":"limit","symbol":"BTC-USD","order_id":2,"owner_id":8,"side":"sell","price_ticks":100,"quantity":1}"#;
+        assert_eq!(
+            request(server.address, Method::POST, "/orders", sell.into())
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let trade = next_json(&mut socket).await;
+        let bbo = next_json(&mut socket).await;
+        let l2 = next_json(&mut socket).await;
+        assert_eq!(trade["type"], "trade");
+        assert_eq!(trade["sequence"], 3);
+        assert_eq!(trade["price_ticks"], 100);
+        assert_eq!(trade["quantity"], 1);
+        assert_eq!(bbo["type"], "bbo");
+        assert_eq!(bbo["sequence"], 4);
+        assert_eq!(l2["type"], "l2_snapshot");
+        assert_eq!(l2["sequence"], 5);
+        assert_eq!(trade["stream_id"], initial["stream_id"]);
+        assert_eq!(l2["symbol"], "BTC-USD");
+
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn market_data_isolates_symbols_and_rejects_application_messages() {
+        let server = running_server(vec![Symbol::new("BTC-USD"), Symbol::new("ETH-USD")], 8).await;
+        let mut btc = websocket(server.address, "BTC-USD").await;
+        let mut eth = websocket(server.address, "ETH-USD").await;
+        assert_eq!(next_json(&mut btc).await["sequence"], 0);
+        assert_eq!(next_json(&mut eth).await["sequence"], 0);
+
+        assert_eq!(
+            request(
+                server.address,
+                Method::POST,
+                "/orders",
+                ORDER.replace("%d", "1"),
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(next_json(&mut btc).await["sequence"], 1);
+        assert_eq!(next_json(&mut btc).await["sequence"], 2);
+        assert!(
+            timeout(Duration::from_millis(30), eth.next())
+                .await
+                .is_err()
+        );
+
+        eth.send(ClientMessage::Text("{}".into())).await.unwrap();
+        let close = timeout(Duration::from_secs(1), eth.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(close, ClientMessage::Close(_)));
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn market_data_upgrade_failures_do_not_admit_a_subscription() {
+        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let (status, body) = request(
+            server.address,
+            Method::GET,
+            "/market-data?symbol=BTC-USD",
+            String::new(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UPGRADE_REQUIRED);
+        assert_eq!(body["error"]["code"], "upgrade_required");
+
+        let mut request = format!("ws://{}/market-data?symbol=BTC-USD", server.address)
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("sec-websocket-protocol", "wrong".parse().unwrap());
+        assert!(connect_async(request).await.is_err());
+        let metrics = server.handle.metrics();
+        assert_eq!(metrics.market_data_barriers_admitted, 0);
+        assert_eq!(metrics.market_data_connections_current, 0);
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reconnect_uses_a_new_snapshot_baseline_without_replay() {
+        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let mut first = websocket(server.address, "BTC-USD").await;
+        let initial = next_json(&mut first).await;
+        assert_eq!(initial["sequence"], 0);
+        assert_eq!(
+            request(
+                server.address,
+                Method::POST,
+                "/orders",
+                ORDER.replace("%d", "1"),
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(next_json(&mut first).await["sequence"], 1);
+        assert_eq!(next_json(&mut first).await["sequence"], 2);
+        drop(first);
+
+        let sell = r#"{"type":"limit","symbol":"BTC-USD","order_id":2,"owner_id":8,"side":"sell","price_ticks":100,"quantity":1}"#;
+        assert_eq!(
+            request(server.address, Method::POST, "/orders", sell.into())
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let mut reconnected = websocket(server.address, "BTC-USD").await;
+        let baseline = next_json(&mut reconnected).await;
+        assert_eq!(baseline["reason"], "initial");
+        assert_eq!(baseline["sequence"], 5);
+        assert_eq!(baseline["bids"], serde_json::json!([]));
+        assert_eq!(baseline["asks"], serde_json::json!([]));
+        assert_eq!(baseline["stream_id"], initial["stream_id"]);
+
+        assert_eq!(
+            request(
+                server.address,
+                Method::POST,
+                "/orders",
+                ORDER.replace("%d", "3"),
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(next_json(&mut reconnected).await["sequence"], 6);
+        assert_eq!(next_json(&mut reconnected).await["sequence"], 7);
+        server.shutdown().await.unwrap();
     }
 }

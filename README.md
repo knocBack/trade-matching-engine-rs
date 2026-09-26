@@ -6,8 +6,8 @@ A deterministic, high-throughput matching engine and agent-based market simulato
 
 An in-memory Central Limit Order Book (CLOB) with strict price-time priority and an
 order-ingestion API, driven by a synthetic agent population modelled on the ABIDES
-simulation framework. WebSocket market data and asynchronous PostgreSQL persistence are
-planned later milestones, not current runtime surfaces.
+simulation framework. WebSocket market data is available through the bounded M4 feed;
+asynchronous PostgreSQL persistence remains a later milestone.
 
 The longer-term PRD budget is sustained 15,000-20,000 orders/sec, sub-millisecond
 median matching latency, p99 under 5 ms, and stable memory. It is not the first HTTP
@@ -18,10 +18,9 @@ Full requirements: [`docs/reference/PRD-final.pdf`](docs/reference/PRD-final.pdf
 
 ## Status
 
-M0-M3 have landed: the workspace and light CI, the correct multi-symbol order book,
-deterministic offline replay, and the bounded HTTP adapter. The requirements-only M4
-WebSocket market-data contract is now defined for a separate implementation PR; no M4
-runtime endpoint is claimed yet. See
+M0-M4 have landed: the workspace and light CI, the correct multi-symbol order book,
+deterministic offline replay, bounded HTTP adapter, and bounded WebSocket market-data
+feed. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for the milestone sequence,
 [docs/BENCHMARK.md](docs/BENCHMARK.md) for the provisional benchmark contract, and
 [docs/adr/](docs/adr/) for the decision record.
@@ -73,9 +72,10 @@ finite limits, graceful drain and benchmark reproduction.
 
 ## Market-data contract (M4)
 
-The normative pre-implementation WebSocket v1 contract is
+The normative WebSocket v1 contract is
 [docs/requirements/M4.md](docs/requirements/M4.md); its independent acceptance inventory
 is [docs/scenarios/M4.md](docs/scenarios/M4.md). Together they specify a one-symbol
 feed, per-process stream identity, per-symbol contiguous sequences, initial L2 baseline,
-reconnect-only resynchronisation, and bounded slow-consumer disconnection. Runtime
-implementation is intentionally deferred to its own PR.
+reconnect-only resynchronisation, and bounded slow-consumer disconnection. The runtime
+endpoint is `GET /market-data?symbol=<symbol>` with the exact
+`trade-rs.market-data.v1` WebSocket subprotocol.

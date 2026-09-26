@@ -247,3 +247,29 @@ pub(crate) fn event_json(
     };
     serde_json::to_string(&value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lagged_receiver_is_terminally_detectable() {
+        let symbol = Symbol::new("BTC-USD");
+        let mut feeds = Feeds::new(std::slice::from_ref(&symbol), 1, 2);
+        let mut subscription = feeds.subscribe(&symbol).unwrap();
+        for quantity in 1..=4 {
+            feeds
+                .by_symbol
+                .get_mut(&symbol)
+                .unwrap()
+                .send(Record::Trade {
+                    price_ticks: 100,
+                    quantity,
+                });
+        }
+        assert!(matches!(
+            subscription.receiver.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_))
+        ));
+    }
+}

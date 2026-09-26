@@ -12,10 +12,12 @@ The schema references to an M2 amendment in the architecture are already fulfill
 by the stacked M2 branch. M3 exports its existing event JSON encoder, without
 changing the M2 tape format or matching engine.
 
-The requirements-only M4 follow-on is [requirements/M4.md](requirements/M4.md). It
-defines the future `GET /market-data?symbol=...` WebSocket upgrade and deliberately
-leaves this M3 `GET /book` API unchanged. No M4 runtime endpoint is claimed by this
-document until its separate implementation ships.
+The M4 feed is [specified in requirements/M4.md](requirements/M4.md). It adds
+`GET /market-data?symbol=...` as a one-symbol HTTP/1.1 WebSocket upgrade, while leaving
+this M3 `GET /book` API unchanged. A successful upgrade requires and selects the exact
+`trade-rs.market-data.v1` subprotocol; its first text frame is an authoritative initial
+top-N L2 snapshot. See that contract for the frame schemas, reconnect-only recovery,
+and terminal slow-consumer behaviour.
 
 ## Configuration and finite resources
 
@@ -27,6 +29,15 @@ document until its separate implementation ships.
 | `--in-flight` | 512 | Requests from before body collection through result serialization |
 | `--body-limit` | 16384 | Bytes; positive, at most 16 KiB |
 | `--connections` | 1024 | Live connection tasks, including slow readers and idle keep-alive |
+| `--market-data-depth` | 20 | Maximum L2 levels per side; 1 through 100 |
+| `--market-data-ring-capacity` | 1024 | Per-symbol power-of-two retained-event ring |
+| `--market-data-connections` | 128 | WebSocket permits; no greater than `--connections` |
+| `--websocket-write-timeout-ms` | 1000 | Per-send/flush deadline |
+| `--websocket-close-timeout-ms` | 1000 | Best-effort close deadline |
+| `--websocket-ping-interval-ms` | 15000 | WebSocket heartbeat interval |
+| `--websocket-pong-timeout-ms` | 30000 | Peer liveness deadline, greater than ping interval |
+| `--websocket-write-buffer` | 65536 | Hard maximum WebSocket write buffer in bytes |
+| `--websocket-inbound-limit` | 1024 | Maximum reassembled inbound application message in bytes |
 
 All limits are positive and fixed at startup. Connection admission also uses
 try-acquire: excess TCP connections are closed before HTTP parsing. This is
