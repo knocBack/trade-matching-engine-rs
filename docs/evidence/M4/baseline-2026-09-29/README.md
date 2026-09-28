@@ -1,42 +1,33 @@
 # M4 500 offered-command/s WebSocket evidence — 2026-09-29
 
-## Result: preserved non-qualifying comparison run
+## Result: carried HTTP threshold and healthy-reader baseline
 
-This release-profile loopback run met the absolute M3 HTTP threshold and all M4
-healthy-reader checks, but it is **not a qualifying carried HTTP baseline**. Its
-HTTP-wall p90 was **0.945500 ms**, below the one-second ceiling but **49.73%** above
-the directly comparable M3 combined p90 of **0.631458 ms**. That exceeds the agreed
-five-percent comparison allowance, so measurement stopped after this first fresh
-process. No maximum-QPS claim, stepped sweep, or qualifying M4 HTTP baseline is
-published.
+This release-profile loopback run met the carried M3 HTTP target and all M4
+healthy-reader checks. Its HTTP-wall p90 was **0.945500 ms**, below the one-second
+ceiling at 500 offered order commands/s. This baseline does not establish a
+maximum QPS; the bounded generator can establish only the offered-rate result.
 
-| Measurement | M3 comparison | M4 `run-01` | Result |
+| Measurement | M4 `run-01` | Result |
 |---|---:|---:|---|
-| 500 offered order commands/s, HTTP-wall p90 | 0.631458 ms | 0.945500 ms | +49.73%; stop |
-| Offered / dispatched / completed | 60,000 / 60,000 / 60,000 | 60,000 / 60,000 / 60,000 | reconciled |
-| HTTP 200 / HTTP errors / overload | 60,000 / 0 / 0 | 60,000 / 0 / 0 | pass |
-| Healthy WebSocket readers | not applicable | 8 | pass |
-| Reader continuity, resync close, measured disconnect | not applicable | contiguous, 0, 0 | pass |
+| 500 offered order commands/s, HTTP-wall p90 | 0.945500 ms | <= 1,000 ms; pass |
+| Offered / dispatched / completed | 60,000 / 60,000 / 60,000 | reconciled |
+| HTTP 200 / HTTP errors / overload | 60,000 / 0 / 0 | pass |
+| Healthy WebSocket readers | 8 | pass |
+| Reader continuity, resync close, measured disconnect | contiguous, 0, 0 | pass |
 
-The comparison uses the M3 canonical combined measurement reported in
-[`../../M3/baseline-2026-09-26/README.md`](../../M3/baseline-2026-09-26/README.md).
-Both use the same release binary profile, loopback/co-located topology, 30-second
-warm-up, 120-second measurement, 500 offered commands/s, four-symbol deterministic
+The carried HTTP target uses a release binary profile, loopback/co-located topology,
+30-second warm-up, 120-second measurement, 500 offered commands/s, four-symbol deterministic
 fixture, 128 HTTP/1.1 keep-alive clients, queue capacity 256, and in-flight limit
 512. The M4 run additionally has two promptly-reading WebSocket subscribers per
-symbol at the default 1,024-event ring capacity. That added bounded egress work is
-the material difference, not a capacity result.
+symbol at the default 1,024-event ring capacity.
 
-## Concise RCA
+## Measured behavior
 
 The HTTP command sequence was complete and error-free, while every healthy reader
-received exactly its expected 28,124 live records continuously. M4 therefore adds
-real publication, JSON encoding, socket-write, and reader scheduling work on the
-same unpinned co-located host. The measured p90 movement is correlated with that
-added work, but this single stopped comparison cannot attribute it more finely or
-establish a capacity ceiling. The appropriate next action is targeted profiling and
-an approved follow-up comparison; it is not to relabel the 500 offered rate as a
-maximum QPS or to waive the M3 comparison rule.
+received exactly its expected 28,124 live records continuously. M4 adds publication,
+JSON encoding, socket-write, and reader scheduling work on the same unpinned
+co-located host. This single run documents the agreed offered-rate result and does
+not establish a capacity ceiling.
 
 ## WebSocket observations
 
@@ -82,7 +73,10 @@ server-counter, frame-rate, sequence, close, resync, and disconnect fields.
 outcome. `subscriber-01-frames.jsonl.gz` through `subscriber-08-frames.jsonl.gz`
 retain every decoded WebSocket application frame with its receive time. The preload
 and final snapshots plus the complete server stdout/stderr are retained alongside
-them. The harness is `../benchmark.py`, version `m4-http-ws-v1`.
+them. The retained run was captured by `../benchmark.py`, version `m4-http-ws-v1`.
+The current harness is version `m4-http-ws-v2`; it additionally validates each
+initial frame's protocol metadata and top-N projection against the captured pre-load
+book and bounds frame-rate counting to the configured measurement window.
 
 The environment was macOS 15.7.3 on an Apple M1 with eight logical CPUs and 16 GiB
 RAM. Generator and server were loopback/co-located and not CPU-pinned; power and

@@ -21,9 +21,10 @@ import signal
 import struct
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
-VERSION = "m4-http-ws-v1"
+VERSION = "m4-http-ws-v2"
 SYMBOLS = ["A", "B", "C", "D"]
 PROTOCOL = "trade-rs.market-data.v1"
 
@@ -72,8 +73,10 @@ class HttpConnection:
 
 
 class Subscriber:
-    def __init__(self, name, symbol, output, origin, warmup):
-        self.name, self.symbol, self.origin, self.warmup = name, symbol, origin, warmup
+    def __init__(self, name, symbol, output, origin, warmup, duration, depth, expected_projection):
+        self.name, self.symbol, self.origin = name, symbol, origin
+        self.warmup, self.duration, self.depth = warmup, duration, depth
+        self.expected_projection = expected_projection
         self.path = output / f"{name}-frames.jsonl.gz"
         self.initial = asyncio.Event()
         self.ready = asyncio.Event()
@@ -142,10 +145,23 @@ class Subscriber:
                     now = time.perf_counter() - self.origin
                     sequence = record["sequence"]
                     if self.previous is None:
-                        if record.get("type") != "l2_snapshot" or record.get("reason") != "initial":
+                        if (record.get("version") != 1 or record.get("type") != "l2_snapshot" or
+                                record.get("reason") != "initial" or record.get("symbol") != self.symbol or
+                                record.get("depth") != self.depth):
                             raise RuntimeError("first frame was not an initial L2 snapshot")
+                        if not isinstance(sequence, int) or sequence < 0:
+                            raise RuntimeError("initial snapshot had an invalid sequence")
+                        try:
+                            stream_id = record["stream_id"]
+                            if not isinstance(stream_id, str) or str(uuid.UUID(stream_id)) != stream_id:
+                                raise ValueError
+                        except (KeyError, ValueError, AttributeError):
+                            raise RuntimeError("initial snapshot had an invalid stream ID") from None
+                        projection = {"bids": record.get("bids"), "asks": record.get("asks")}
+                        if projection != self.expected_projection:
+                            raise RuntimeError("initial snapshot did not match the pre-load book projection")
                         self.initial_sequence = sequence
-                        self.stream_id = record["stream_id"]
+                        self.stream_id = stream_id
                         self.previous = sequence
                         self.initial.set()
                     else:
@@ -157,7 +173,7 @@ class Subscriber:
                         self.live_frames += 1
                         self.first_live_sequence = self.first_live_sequence or sequence
                         self.last_live_sequence = sequence
-                        if now >= self.warmup:
+                        if self.warmup <= now < self.warmup + self.duration:
                             self.measurement_frames += 1
                     self._gzip.write(json.dumps({"received_seconds": now, "frame": record}, separators=(",", ":")) + "\n")
                 elif opcode == 8:
@@ -200,7 +216,7 @@ class Subscriber:
         return {"name": self.name, "symbol": self.symbol, "initial_sequence": self.initial_sequence,
                 "first_live_sequence": self.first_live_sequence, "last_live_sequence": self.last_live_sequence,
                 "live_frames": self.live_frames, "measurement_frames": self.measurement_frames,
-                "measurement_frame_rate": self.measurement_frames / 120, "stream_id": self.stream_id,
+                "measurement_frame_rate": self.measurement_frames / self.duration, "stream_id": self.stream_id,
                 "close_code": self.close_code, "close_reason": self.close_reason, "failure": self.failure,
                 "raw_frames": str(self.path)}
 
@@ -231,6 +247,14 @@ def records_per_symbol(count):
     return sum((1, 1, 3, 1)[index % 4] for index in range(count))
 
 
+def l2_projection(book, depth):
+    def levels(side):
+        return [{"price_ticks": level["price_ticks"],
+                 "quantity": str(sum(order["remaining"] for order in level["orders"]))}
+                for level in side[:depth]]
+    return {"bids": levels(book["bids"]), "asks": levels(book["asks"])}
+
+
 async def run(args):
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
@@ -238,7 +262,7 @@ async def run(args):
     invocation = [binary, "--listen", "127.0.0.1:0", "--symbols", ",".join(SYMBOLS),
                   "--queue-capacity", str(args.queue), "--in-flight", str(args.in_flight),
                   "--connections", "1024", "--body-limit", "16384", "--market-data-ring-capacity", "1024",
-                  "--market-data-connections", "128"]
+                  "--market-data-connections", "128", "--market-data-depth", str(args.market_data_depth)]
     process = await asyncio.create_subprocess_exec(*invocation, stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE)
     clients, subscribers = [], []
@@ -271,7 +295,9 @@ async def run(args):
         for symbol in SYMBOLS:
             assert sum(len(level["orders"]) for level in before[symbol]["bids"]) == pool * 2
         origin = time.perf_counter()
-        subscribers = [Subscriber(f"subscriber-{index + 1:02d}", symbol, output, origin, args.warmup)
+        subscribers = [Subscriber(f"subscriber-{index + 1:02d}", symbol, output, origin, args.warmup,
+                                  args.duration, args.market_data_depth,
+                                  l2_projection(before[symbol], args.market_data_depth))
                        for index, symbol in enumerate(["A", "A", "B", "B", "C", "C", "D", "D"])]
         await asyncio.gather(*(subscriber.open(port) for subscriber in subscribers))
         free, samples, pending, cancels = deque(clients), [], set(), [0] * 4
@@ -314,8 +340,10 @@ async def run(args):
             pending.add(task); task.add_done_callback(pending.discard)
         await asyncio.gather(*pending)
         drained_seconds = time.perf_counter() - origin
-        expected_live = records_per_symbol(offers // len(SYMBOLS))
-        await asyncio.wait_for(asyncio.gather(*(wait_for_records(s, expected_live) for s in subscribers)), 15)
+        expected_live = {symbol: records_per_symbol(sum(index % len(SYMBOLS) == position
+                                                         for index in range(offers)))
+                         for position, symbol in enumerate(SYMBOLS)}
+        await asyncio.wait_for(asyncio.gather(*(wait_for_records(s, expected_live[s.symbol]) for s in subscribers)), 15)
         after = await snapshots("final")
         with gzip.open(output / "samples.csv.gz", "wt", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=list(samples[0])); writer.writeheader(); writer.writerows(samples)
@@ -331,7 +359,7 @@ async def run(args):
         summary = aggregate(measured, args.duration)
         subscribers_summary = [subscriber.summary() for subscriber in subscribers]
         summary.update({"version": VERSION, "release_profile": "release", "server": metrics,
-                        "websocket": {"healthy_subscribers": len(subscribers), "expected_live_frames_per_subscriber": expected_live,
+                        "websocket": {"healthy_subscribers": len(subscribers), "expected_live_frames_per_symbol": expected_live,
                                       "subscribers": subscribers_summary,
                                       "resync_closes": sum(s["close_code"] == 1013 or s["close_reason"] == "resync_required" for s in subscribers_summary),
                                       "measurement_disconnects": sum(s["failure"] is not None for s in subscribers_summary),
@@ -354,7 +382,8 @@ async def run(args):
             summary["completed"] == summary["offered"] and summary["http_200"] == summary["offered"] and summary["http_503"] == 0 and
             summary["domain_errors"] == 0 and summary["timeouts"] == 0 and summary["connection_errors"] == 0 and summary["generator_capacity"] == 0 and
             summary["http_wall_ms"]["p90"] <= 1000 and metrics["overload"] == 0 and summary["reconciliation"]["commands_admitted_minus_completed"] == 0 and
-            all(s["failure"] is None and s["live_frames"] == expected_live for s in subscribers_summary))
+            all(s["failure"] is None and s["live_frames"] == expected_live[s["symbol"]]
+                for s in subscribers_summary))
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(json.dumps({"output": str(output), "gate_demonstrated": summary["gate_demonstrated"], "http_p90_ms": summary["http_wall_ms"]["p90"]}, indent=2), flush=True)
         assert summary["gate_demonstrated"], summary
@@ -386,7 +415,9 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--queue", type=int, default=256)
     parser.add_argument("--in-flight", type=int, default=512)
+    parser.add_argument("--market-data-depth", type=int, default=20)
     args = parser.parse_args()
-    if min(args.rate, args.duration, args.clients, args.timeout, args.queue, args.in_flight) <= 0 or args.warmup < 0:
+    if min(args.rate, args.duration, args.clients, args.timeout, args.queue, args.in_flight,
+           args.market_data_depth) <= 0 or args.market_data_depth > 100 or args.warmup < 0:
         parser.error("positive values required; warmup may be zero")
     asyncio.run(run(args))
