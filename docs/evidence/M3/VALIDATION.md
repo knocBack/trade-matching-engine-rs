@@ -44,3 +44,8 @@ Completion requires explicit independent requirement-conformance and focused
 captain-attention verdicts, all three canonical release runs plus stepped probes,
 an open unmerged PR targeting main, and an empty or explicitly routed captain-call
 inventory. No changed product policy or extra transport is authorized.
+
+Canonical baseline evidence from three fresh release-profile loopback runs is retained
+in [`baseline-2026-09-26`](baseline-2026-09-26/README.md). It demonstrates the current
+500 offered-command/s, one-second HTTP-wall p90 gate without claiming a maximum QPS;
+the separate overload/probe and review evidence above remains outstanding.

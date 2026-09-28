@@ -1,0 +1,2 @@
+{"listening": "127.0.0.1:49875"}
+{"requests":{"DELETE /orders/:id:200":18748,"GET /book:200":8,"POST /orders:200":97508},"commands_admitted":116256,"commands_completed":116256,"domain_rejected":{},"overload":0,"queue_current":0,"queue_high_water":23,"snapshots_admitted":8,"snapshots_completed":8,"snapshots_rejected":0,"completion_delivery_failures":0,"connection_errors":0,"connections_rejected":0,"graceful_engine_exits":1,"abnormal_engine_exits":0}
