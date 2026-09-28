@@ -9,7 +9,7 @@ async fn main() -> io::Result<()> {
     while let Some(flag) = args.next() {
         if flag == "--help" {
             println!(
-                "trade-http [--listen 127.0.0.1:8080] [--symbols BTC-USD,ETH-USD] [--queue-capacity 256] [--in-flight 512] [--body-limit 16384] [--connections 1024] [--market-data-depth 20] [--market-data-ring-capacity 1024] [--market-data-connections 128] [--websocket-write-timeout-ms 1000] [--websocket-close-timeout-ms 1000] [--websocket-ping-interval-ms 15000] [--websocket-pong-timeout-ms 30000] [--websocket-write-buffer 65536] [--websocket-inbound-limit 1024]\nSIGINT/SIGTERM drain admitted work. Final JSON counters are written to stdout."
+                "trade-http [--listen 127.0.0.1:8080] [--symbols BTC-USD,ETH-USD] [--queue-capacity 256] [--in-flight 512] [--body-limit 16384] [--connections 1024] [--market-data-depth 20] [--market-data-ring-capacity 1024] [--market-data-connections 128] [--websocket-write-timeout-ms 1000] [--websocket-close-timeout-ms 1000] [--websocket-ping-interval-ms 15000] [--websocket-pong-timeout-ms 30000] [--websocket-write-buffer 65536] [--websocket-inbound-limit 1024]\nMarket-data ring capacity must be a power of two and at least 64. SIGINT/SIGTERM drain admitted work. Final JSON counters are written to stdout."
             );
             return Ok(());
         }

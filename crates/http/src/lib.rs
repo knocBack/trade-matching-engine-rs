@@ -37,6 +37,7 @@ use uuid::Uuid;
 use wire::{Error, MALFORMED, MARKET_OVERLOADED, OVERLOADED, UNAVAILABLE};
 
 const MARKET_DATA_PROTOCOL: &str = "trade-rs.market-data.v1";
+const MIN_MARKET_DATA_RING_CAPACITY: usize = 64;
 
 fn duration_millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
@@ -101,8 +102,6 @@ impl Config {
             || self.body_limit == 0
             || self.body_limit > 16 * 1024
             || !(1..=100).contains(&self.market_data_depth)
-            || self.market_data_ring_capacity == 0
-            || !self.market_data_ring_capacity.is_power_of_two()
             || self.market_data_connections == 0
             || self.market_data_connections > self.connections
             || self.websocket_write_timeout.is_zero()
@@ -120,6 +119,18 @@ impl Config {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid finite HTTP or market-data limits",
+            ));
+        }
+        if self.market_data_ring_capacity < MIN_MARKET_DATA_RING_CAPACITY {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "market-data ring capacity must be at least 64",
+            ));
+        }
+        if !self.market_data_ring_capacity.is_power_of_two() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "market-data ring capacity must be a power of two",
             ));
         }
         if self.maximum_market_data_frame() > self.websocket_write_buffer {
@@ -1626,8 +1637,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn market_data_upgrade_initial_snapshot_and_publication_order() {
-        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+    async fn healthy_reader_receives_contiguous_three_record_match_at_minimum_ring_capacity() {
+        let server =
+            running_server(vec![Symbol::new("BTC-USD")], MIN_MARKET_DATA_RING_CAPACITY).await;
         let mut socket = websocket(server.address, "BTC-USD").await;
         let initial = next_json(&mut socket).await;
         assert_eq!(initial["type"], "l2_snapshot");
@@ -1674,12 +1686,19 @@ mod tests {
         assert_eq!(trade["stream_id"], initial["stream_id"]);
         assert_eq!(l2["symbol"], "BTC-USD");
 
-        server.shutdown().await.unwrap();
+        let metrics = server.shutdown().await.unwrap();
+        assert_eq!(metrics.market_data_config.ring_capacity, 64);
+        assert_eq!(metrics.market_data_lag_disconnects, 0);
+        assert_eq!(metrics.market_data_disconnects.get("lag"), None);
     }
 
     #[tokio::test]
     async fn market_data_isolates_symbols_and_rejects_application_messages() {
-        let server = running_server(vec![Symbol::new("BTC-USD"), Symbol::new("ETH-USD")], 8).await;
+        let server = running_server(
+            vec![Symbol::new("BTC-USD"), Symbol::new("ETH-USD")],
+            MIN_MARKET_DATA_RING_CAPACITY,
+        )
+        .await;
         let mut btc = websocket(server.address, "BTC-USD").await;
         let mut eth = websocket(server.address, "ETH-USD").await;
         assert_eq!(next_json(&mut btc).await["sequence"], 0);
@@ -1716,7 +1735,8 @@ mod tests {
 
     #[tokio::test]
     async fn market_data_upgrade_failures_do_not_admit_a_subscription() {
-        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let server =
+            running_server(vec![Symbol::new("BTC-USD")], MIN_MARKET_DATA_RING_CAPACITY).await;
         let (status, body) = request(
             server.address,
             Method::GET,
@@ -1788,7 +1808,8 @@ mod tests {
 
     #[tokio::test]
     async fn market_data_metrics_reconcile_publications_and_delivery() {
-        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let server =
+            running_server(vec![Symbol::new("BTC-USD")], MIN_MARKET_DATA_RING_CAPACITY).await;
         let mut socket = websocket(server.address, "BTC-USD").await;
         assert_eq!(next_json(&mut socket).await["sequence"], 0);
         assert_eq!(
@@ -1808,7 +1829,10 @@ mod tests {
         let metrics = server.shutdown().await.unwrap();
         let symbol = metrics.market_data_symbols.get("BTC-USD").unwrap();
         assert_eq!(metrics.market_data_upgrade_outcomes["101"], 1);
-        assert_eq!(metrics.market_data_config.ring_capacity, 8);
+        assert_eq!(
+            metrics.market_data_config.ring_capacity,
+            MIN_MARKET_DATA_RING_CAPACITY
+        );
         assert!(metrics.market_data_config.maximum_frame_bytes > 0);
         assert_eq!(symbol.subscribers_current, 0);
         assert_eq!(symbol.subscribers_high_water, 1);
@@ -1826,7 +1850,8 @@ mod tests {
 
     #[tokio::test]
     async fn reconnect_uses_a_new_snapshot_baseline_without_replay() {
-        let server = running_server(vec![Symbol::new("BTC-USD")], 8).await;
+        let server =
+            running_server(vec![Symbol::new("BTC-USD")], MIN_MARKET_DATA_RING_CAPACITY).await;
         let mut first = websocket(server.address, "BTC-USD").await;
         let initial = next_json(&mut first).await;
         assert_eq!(initial["sequence"], 0);
@@ -1874,5 +1899,27 @@ mod tests {
         assert_eq!(next_json(&mut reconnected).await["sequence"], 6);
         assert_eq!(next_json(&mut reconnected).await["sequence"], 7);
         server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn market_data_ring_capacity_rejects_below_minimum_and_non_power_of_two_values() {
+        assert_eq!(Config::default().market_data_ring_capacity, 1024);
+
+        for (capacity, expected) in [
+            (32, "market-data ring capacity must be at least 64"),
+            (96, "market-data ring capacity must be a power of two"),
+        ] {
+            let error = match Server::bind(Config {
+                market_data_ring_capacity: capacity,
+                ..Config::default()
+            })
+            .await
+            {
+                Ok(_) => panic!("ring capacity {capacity} unexpectedly started"),
+                Err(error) => error,
+            };
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(error.to_string(), expected);
+        }
     }
 }

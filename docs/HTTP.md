@@ -30,7 +30,7 @@ and terminal slow-consumer behaviour.
 | `--body-limit` | 16384 | Bytes; positive, at most 16 KiB |
 | `--connections` | 1024 | Live connection tasks, including slow readers and idle keep-alive |
 | `--market-data-depth` | 20 | Maximum L2 levels per side; 1 through 100 |
-| `--market-data-ring-capacity` | 1024 | Per-symbol power-of-two retained-event ring |
+| `--market-data-ring-capacity` | 1024 | Per-symbol retained-event ring; power of two and at least 64 |
 | `--market-data-connections` | 128 | WebSocket permits; no greater than `--connections` |
 | `--websocket-write-timeout-ms` | 1000 | Per-send/flush deadline |
 | `--websocket-close-timeout-ms` | 1000 | Best-effort close deadline |

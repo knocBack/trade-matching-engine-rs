@@ -284,9 +284,9 @@ mod tests {
     #[test]
     fn lagged_receiver_is_terminally_detectable() {
         let symbol = Symbol::new("BTC-USD");
-        let mut feeds = Feeds::new(std::slice::from_ref(&symbol), 2);
+        let mut feeds = Feeds::new(std::slice::from_ref(&symbol), 64);
         let mut subscription = feeds.subscribe(&symbol).unwrap();
-        for quantity in 1..=4 {
+        for quantity in 1..=66 {
             feeds
                 .by_symbol
                 .get_mut(&symbol)
