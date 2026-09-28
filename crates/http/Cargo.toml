@@ -1,0 +1,25 @@
+[package]
+name = "trade-http"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+trade-orderbook = { path = "../orderbook" }
+trade-replay = { path = "../replay" }
+bytes = "1"
+base64 = "0.22"
+futures-util = { version = "0.3", features = ["sink"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time"] }
+tokio-tungstenite = "0.24"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+hyper = { version = "1", features = ["client", "http1"] }
+tokio = { version = "1", features = ["io-util"] }
+proptest = "1.6"

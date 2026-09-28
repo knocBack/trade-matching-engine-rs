@@ -1,9 +1,11 @@
-# Provisional benchmark contract
+# M3 benchmark baseline
 
-This is the initial M3 baseline, not a service-level promise or the later PRD
+The qualifying three-run release-profile loopback evidence in
+[`evidence/M3/baseline-2026-09-26`](evidence/M3/baseline-2026-09-26/README.md)
+is the current M3 baseline. It is not a service-level promise or the later PRD
 capacity budget.
 
-## Initial co-located baseline
+## Current co-located baseline
 
 - **Offered order-command HTTP rate:** 500 requests per second. RPS and QPS are
   aliases here.
@@ -19,10 +21,9 @@ M3 may separately label 100K-500K offered requests per second as
 **exploratory probes**. They are not current pass thresholds, acceptance criteria, or
 capacity promises.
 
-## Evidence replaces this definition
+## Canonical evidence
 
-M3 must replace or revise this initial definition with observed client HTTP-wall and
-load-generator evidence. Until then, this compact baseline is only the starting
-comparison point. Overload handling is assessed separately: an overload rejection
-must be immediate and non-waiting, without this document selecting an HTTP response
-status.
+The canonical evidence records observed client HTTP-wall and load-generator results
+for the current baseline. Overload handling is assessed separately: an overload
+rejection must be immediate and non-waiting, without this document selecting an HTTP
+response status.

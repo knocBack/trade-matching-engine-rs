@@ -186,6 +186,19 @@ pub struct BookSnapshot {
     pub asks: Vec<PriceLevelSnapshot>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarketDataLevel {
+    pub price: PriceTicks,
+    pub quantity: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarketDataSnapshot {
+    pub symbol: Symbol,
+    pub bids: Vec<MarketDataLevel>,
+    pub asks: Vec<MarketDataLevel>,
+}
+
 #[derive(Clone, Debug)]
 struct RestingOrder {
     order_id: OrderId,
@@ -199,7 +212,13 @@ struct Locator {
     price: PriceTicks,
 }
 
-type Levels = BTreeMap<PriceTicks, VecDeque<RestingOrder>>;
+#[derive(Clone, Debug, Default)]
+struct PriceLevel {
+    orders: VecDeque<RestingOrder>,
+    quantity: u128,
+}
+
+type Levels = BTreeMap<PriceTicks, PriceLevel>;
 
 /// A self-contained book for one symbol. It is also the direct matching benchmark
 /// surface; [`MultiSymbolBook`] uses this exact implementation for dispatch.
@@ -301,6 +320,15 @@ impl OrderBook {
         }
     }
 
+    #[must_use]
+    pub fn market_data_snapshot(&self, depth: usize) -> MarketDataSnapshot {
+        MarketDataSnapshot {
+            symbol: self.symbol.clone(),
+            bids: Self::market_data_levels(&self.bids, true, depth),
+            asks: Self::market_data_levels(&self.asks, false, depth),
+        }
+    }
+
     fn validate_new(&self, order_id: OrderId, quantity: Quantity) -> Result<(), CommandError> {
         if quantity.0 == 0 {
             return Err(CommandError::InvalidQuantity);
@@ -384,17 +412,18 @@ impl OrderBook {
                 return None;
             }
         }
-        Some((*price, queue.front()?.clone()))
+        Some((*price, queue.orders.front()?.clone()))
     }
 
     fn pop_best(&mut self, side: Side, price: PriceTicks) -> RestingOrder {
         let levels = self.levels_mut(side);
-        let maker = levels
-            .get_mut(&price)
-            .expect("candidate level exists")
-            .pop_front()
-            .expect("candidate queue nonempty");
-        if levels.get(&price).is_some_and(VecDeque::is_empty) {
+        let level = levels.get_mut(&price).expect("candidate level exists");
+        let maker = level.orders.pop_front().expect("candidate queue nonempty");
+        level.quantity -= u128::from(maker.quantity.0);
+        if levels
+            .get(&price)
+            .is_some_and(|level| level.orders.is_empty())
+        {
             levels.remove(&price);
         }
         self.live_orders.remove(&maker.order_id);
@@ -402,10 +431,9 @@ impl OrderBook {
     }
 
     fn restore_front(&mut self, side: Side, price: PriceTicks, order: RestingOrder) {
-        self.levels_mut(side)
-            .entry(price)
-            .or_default()
-            .push_front(order.clone());
+        let level = self.levels_mut(side).entry(price).or_default();
+        level.orders.push_front(order.clone());
+        level.quantity += u128::from(order.quantity.0);
         self.live_orders
             .insert(order.order_id, Locator { side, price });
     }
@@ -418,14 +446,13 @@ impl OrderBook {
         price: PriceTicks,
         quantity: Quantity,
     ) {
-        self.levels_mut(side)
-            .entry(price)
-            .or_default()
-            .push_back(RestingOrder {
-                order_id,
-                owner_id,
-                quantity,
-            });
+        let level = self.levels_mut(side).entry(price).or_default();
+        level.orders.push_back(RestingOrder {
+            order_id,
+            owner_id,
+            quantity,
+        });
+        level.quantity += u128::from(quantity.0);
         self.live_orders.insert(order_id, Locator { side, price });
     }
 
@@ -440,11 +467,13 @@ impl OrderBook {
             .get_mut(&locator.price)
             .expect("locator level exists");
         let position = queue
+            .orders
             .iter()
             .position(|order| order.order_id == order_id)
             .expect("locator order exists");
-        let order = queue.remove(position).expect("position exists");
-        if queue.is_empty() {
+        let order = queue.orders.remove(position).expect("position exists");
+        queue.quantity -= u128::from(order.quantity.0);
+        if queue.orders.is_empty() {
             levels.remove(&locator.price);
         }
         self.live_orders.remove(&order_id);
@@ -469,6 +498,7 @@ impl OrderBook {
             .map(|(price, queue)| PriceLevelSnapshot {
                 price: *price,
                 orders: queue
+                    .orders
                     .iter()
                     .map(|order| RestingOrderSnapshot {
                         order_id: order.order_id,
@@ -480,6 +510,29 @@ impl OrderBook {
                     .collect(),
             })
             .collect()
+    }
+
+    fn market_data_levels(levels: &Levels, reverse: bool, depth: usize) -> Vec<MarketDataLevel> {
+        if reverse {
+            levels
+                .iter()
+                .rev()
+                .take(depth)
+                .map(|(price, level)| MarketDataLevel {
+                    price: *price,
+                    quantity: level.quantity,
+                })
+                .collect()
+        } else {
+            levels
+                .iter()
+                .take(depth)
+                .map(|(price, level)| MarketDataLevel {
+                    price: *price,
+                    quantity: level.quantity,
+                })
+                .collect()
+        }
     }
 }
 
@@ -513,6 +566,17 @@ impl MultiSymbolBook {
         self.books
             .get(symbol)
             .map(OrderBook::snapshot)
+            .ok_or(CommandError::UnknownSymbol)
+    }
+
+    pub fn market_data_snapshot(
+        &self,
+        symbol: &Symbol,
+        depth: usize,
+    ) -> Result<MarketDataSnapshot, CommandError> {
+        self.books
+            .get(symbol)
+            .map(|book| book.market_data_snapshot(depth))
             .ok_or(CommandError::UnknownSymbol)
     }
 
@@ -741,6 +805,34 @@ mod tests {
             MultiSymbolBook::new([sym("A"), sym("A")]),
             Err(DuplicateSymbolError(value)) if value == sym("A")
         ));
+    }
+
+    #[test]
+    fn market_data_snapshot_aggregates_only_requested_levels() {
+        let mut book = MultiSymbolBook::new([sym("XYZ")]).unwrap();
+        book.execute(limit("XYZ", 1, 1, Side::Buy, 100, 2)).unwrap();
+        book.execute(limit("XYZ", 2, 2, Side::Buy, 100, 3)).unwrap();
+        book.execute(limit("XYZ", 3, 3, Side::Buy, 99, 7)).unwrap();
+        book.execute(limit("XYZ", 4, 4, Side::Sell, 101, 11))
+            .unwrap();
+        book.execute(limit("XYZ", 5, 5, Side::Sell, 102, 13))
+            .unwrap();
+
+        let snapshot = book.market_data_snapshot(&sym("XYZ"), 1).unwrap();
+        assert_eq!(
+            snapshot.bids,
+            vec![MarketDataLevel {
+                price: PriceTicks(100),
+                quantity: 5,
+            }]
+        );
+        assert_eq!(
+            snapshot.asks,
+            vec![MarketDataLevel {
+                price: PriceTicks(101),
+                quantity: 11,
+            }]
+        );
     }
 
     #[derive(Clone, Debug)]
