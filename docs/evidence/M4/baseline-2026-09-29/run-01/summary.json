@@ -1,0 +1,413 @@
+{
+  "offered": 60000,
+  "dispatched": 60000,
+  "completed": 60000,
+  "http_200": 60000,
+  "http_503": 0,
+  "domain_errors": 0,
+  "timeouts": 0,
+  "connection_errors": 0,
+  "generator_capacity": 0,
+  "counts": {
+    "response:200:": 60000
+  },
+  "http_wall_ms": {
+    "p50": 0.6592909921891987,
+    "p90": 0.9455000108573586,
+    "p95": 1.0858340247068554,
+    "p99": 1.7918329976964742,
+    "max": 54.14574997848831
+  },
+  "offered_response_ms": {
+    "p50": 0.8697500093859389,
+    "p90": 1.161250021780802,
+    "p95": 1.3201250082346405,
+    "p99": 8.71375002363095,
+    "max": 72.90562500664777
+  },
+  "scheduling_lag_ms": {
+    "p50": 0.21233300375911313,
+    "p90": 0.2418750156678584,
+    "p95": 0.26795800611978393,
+    "p99": 3.1881250161660546,
+    "max": 53.16408301121811
+  },
+  "missing_fraction": 0.0,
+  "successful_rps": 500.0,
+  "completed_rps": 500.0,
+  "version": "m4-http-ws-v1",
+  "release_profile": "release",
+  "server": {
+    "requests": {
+      "DELETE /orders/:id:200": 18748,
+      "GET /book:200": 8,
+      "GET /market-data:101": 8,
+      "POST /orders:200": 97508
+    },
+    "commands_admitted": 116256,
+    "commands_completed": 116256,
+    "domain_rejected": {},
+    "overload": 0,
+    "queue_current": 0,
+    "queue_high_water": 47,
+    "snapshots_admitted": 8,
+    "snapshots_completed": 8,
+    "snapshots_rejected": 0,
+    "completion_delivery_failures": 0,
+    "connection_errors": 0,
+    "connections_rejected": 0,
+    "graceful_engine_exits": 1,
+    "abnormal_engine_exits": 0,
+    "market_data_connections_current": 0,
+    "market_data_connections_high_water": 8,
+    "market_data_connections_rejected": 0,
+    "market_data_barriers_admitted": 8,
+    "market_data_barriers_completed": 8,
+    "market_data_barriers_rejected": 0,
+    "market_data_lag_disconnects": 0,
+    "market_data_lagged_messages": 0,
+    "market_data_frames_written": 225000,
+    "market_data_upgrade_outcomes": {
+      "101": 8
+    },
+    "market_data_symbols": {
+      "A": {
+        "subscribers_current": 0,
+        "subscribers_high_water": 2,
+        "sequence": 43595,
+        "logical_events": {
+          "bbo": 9844,
+          "l2_snapshot": 29064,
+          "trade": 4687
+        },
+        "ring_sends_with_receivers": 28124,
+        "events_without_receivers": 15471,
+        "frames_written": {
+          "bbo": 9374,
+          "l2_snapshot": 37502,
+          "trade": 9374
+        },
+        "frame_bytes_written": {
+          "bbo": 1517528,
+          "l2_snapshot": 10337582,
+          "trade": 1312360
+        }
+      },
+      "B": {
+        "subscribers_current": 0,
+        "subscribers_high_water": 2,
+        "sequence": 43595,
+        "logical_events": {
+          "bbo": 9844,
+          "l2_snapshot": 29064,
+          "trade": 4687
+        },
+        "ring_sends_with_receivers": 28124,
+        "events_without_receivers": 15471,
+        "frames_written": {
+          "bbo": 9374,
+          "l2_snapshot": 37502,
+          "trade": 9374
+        },
+        "frame_bytes_written": {
+          "bbo": 1517528,
+          "l2_snapshot": 10337582,
+          "trade": 1312360
+        }
+      },
+      "C": {
+        "subscribers_current": 0,
+        "subscribers_high_water": 2,
+        "sequence": 43595,
+        "logical_events": {
+          "bbo": 9844,
+          "l2_snapshot": 29064,
+          "trade": 4687
+        },
+        "ring_sends_with_receivers": 28124,
+        "events_without_receivers": 15471,
+        "frames_written": {
+          "bbo": 9374,
+          "l2_snapshot": 37502,
+          "trade": 9374
+        },
+        "frame_bytes_written": {
+          "bbo": 1517528,
+          "l2_snapshot": 10337582,
+          "trade": 1312360
+        }
+      },
+      "D": {
+        "subscribers_current": 0,
+        "subscribers_high_water": 2,
+        "sequence": 43595,
+        "logical_events": {
+          "bbo": 9844,
+          "l2_snapshot": 29064,
+          "trade": 4687
+        },
+        "ring_sends_with_receivers": 28124,
+        "events_without_receivers": 15471,
+        "frames_written": {
+          "bbo": 9374,
+          "l2_snapshot": 37502,
+          "trade": 9374
+        },
+        "frame_bytes_written": {
+          "bbo": 1517528,
+          "l2_snapshot": 10337582,
+          "trade": 1312360
+        }
+      }
+    },
+    "market_data_disconnects": {
+      "peer_closed": 8
+    },
+    "market_data_forced_task_aborts": 0,
+    "market_data_graceful_publisher_exits": 1,
+    "market_data_abnormal_publisher_exits": 0,
+    "market_data_config": {
+      "depth": 20,
+      "ring_capacity": 1024,
+      "connection_limit": 128,
+      "websocket_write_timeout_ms": 1000,
+      "websocket_close_timeout_ms": 1000,
+      "websocket_ping_interval_ms": 15000,
+      "websocket_pong_timeout_ms": 30000,
+      "websocket_write_buffer": 65536,
+      "websocket_inbound_limit": 1024,
+      "maximum_frame_bytes": 4358
+    }
+  },
+  "websocket": {
+    "healthy_subscribers": 8,
+    "expected_live_frames_per_subscriber": 28124,
+    "subscribers": [
+      {
+        "name": "subscriber-01",
+        "symbol": "A",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-01-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-02",
+        "symbol": "A",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-02-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-03",
+        "symbol": "B",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-03-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-04",
+        "symbol": "B",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-04-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-05",
+        "symbol": "C",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-05-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-06",
+        "symbol": "C",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-06-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-07",
+        "symbol": "D",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-07-frames.jsonl.gz"
+      },
+      {
+        "name": "subscriber-08",
+        "symbol": "D",
+        "initial_sequence": 15471,
+        "first_live_sequence": 15472,
+        "last_live_sequence": 43595,
+        "live_frames": 28124,
+        "measurement_frames": 22500,
+        "measurement_frame_rate": 187.5,
+        "stream_id": "113a28bb-170a-410c-b1a2-70f9d76bf770",
+        "close_code": null,
+        "close_reason": null,
+        "failure": null,
+        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-08-frames.jsonl.gz"
+      }
+    ],
+    "resync_closes": 0,
+    "measurement_disconnects": 0,
+    "post_measurement_client_closes": 8
+  },
+  "warmup": {
+    "offered": 15000,
+    "dispatched": 15000,
+    "completed": 15000,
+    "http_200": 15000,
+    "http_503": 0,
+    "domain_errors": 0,
+    "timeouts": 0,
+    "connection_errors": 0,
+    "generator_capacity": 0,
+    "counts": {
+      "response:200:": 15000
+    },
+    "http_wall_ms": {
+      "p50": 0.7382500043604523,
+      "p90": 1.0540000221226364,
+      "p95": 1.2106249923817813,
+      "p99": 6.9794169976376,
+      "max": 58.13962500542402
+    },
+    "offered_response_ms": {
+      "p50": 0.9482080133160764,
+      "p90": 1.2889580167829706,
+      "p95": 1.4976660110992412,
+      "p99": 26.73883301136115,
+      "max": 67.84220802015639
+    },
+    "scheduling_lag_ms": {
+      "p50": 0.2102080211052737,
+      "p90": 0.2472910103392678,
+      "p95": 0.29029100178590284,
+      "p99": 12.084083020219794,
+      "max": 56.16091600572659
+    },
+    "missing_fraction": 0.0,
+    "successful_rps": 500.0,
+    "completed_rps": 500.0
+  },
+  "drained_seconds": 149.99935391600593,
+  "final_orders": {
+    "A": 10316,
+    "B": 10316,
+    "C": 10316,
+    "D": 10316
+  },
+  "reconciliation": {
+    "commands_admitted_minus_completed": 0,
+    "preload_commands": 41256,
+    "load_admitted": 75000,
+    "load_engine_completed": 75000,
+    "load_http_200": 75000
+  },
+  "configuration": {
+    "server": "target/release/trade-http",
+    "output": "docs/evidence/M4/baseline-2026-09-29/run-01",
+    "rate": 500,
+    "warmup": 30.0,
+    "duration": 120.0,
+    "clients": 128,
+    "timeout": 10.0,
+    "queue": 256,
+    "in_flight": 512,
+    "invocation": [
+      "/Users/prashanth/.treehouse/trade-rs-fc80db/6/trade-rs/target/release/trade-http",
+      "--listen",
+      "127.0.0.1:0",
+      "--symbols",
+      "A,B,C,D",
+      "--queue-capacity",
+      "256",
+      "--in-flight",
+      "512",
+      "--connections",
+      "1024",
+      "--body-limit",
+      "16384",
+      "--market-data-ring-capacity",
+      "1024",
+      "--market-data-connections",
+      "128"
+    ],
+    "pool_per_symbol": 5157,
+    "subscribers": "two healthy readers per A,B,C,D",
+    "version": "m4-http-ws-v1"
+  },
+  "environment": {
+    "python": "3.14.2",
+    "os": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "logical_cpus": 8,
+    "commit": "617d510d91b8ef7742d8e293e9962313ad9947a0",
+    "git_status": "?? docs/evidence/M4/\n",
+    "rust": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+    "binary_sha256": "530b23bb3f1a5f7b2e1fc41b42740059d064f9e849aea57c6d8fbab1dd12a38d"
+  },
+  "runtime_notes": {
+    "placement": "loopback, generator and server colocated on one host",
+    "affinity": "not pinned",
+    "debug_request_logging": false,
+    "power_thermal": "not controlled",
+    "capacity_claim": "baseline evidence only; no maximum QPS established"
+  },
+  "gate_demonstrated": true
+}
