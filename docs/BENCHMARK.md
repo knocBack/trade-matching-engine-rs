@@ -27,3 +27,16 @@ The canonical evidence records observed client HTTP-wall and load-generator resu
 for the current baseline. Overload handling is assessed separately: an overload
 rejection must be immediate and non-waiting, without this document selecting an HTTP
 response status.
+
+## M4 WebSocket comparison evidence
+
+[`evidence/M4/baseline-2026-09-29`](evidence/M4/baseline-2026-09-29/README.md)
+records the first release-profile, loopback/co-located M4 comparison: the same 500
+offered order-command requests/s fixture with eight healthy WebSocket subscribers at
+the default 1,024-event ring capacity. It completed every HTTP command with zero
+errors and overload, held HTTP-wall p90 to 0.945500 ms, and delivered contiguous
+sequences without reader disconnect or resync. It is nevertheless **not** a qualifying
+carried baseline: the directly comparable M3 combined p90 was 0.631458 ms, so the
+49.73% regression exceeds the five-percent comparison allowance. Measurement stopped
+and the evidence includes a concise RCA. It establishes neither maximum QPS nor a
+WebSocket capacity claim.
