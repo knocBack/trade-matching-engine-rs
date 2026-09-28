@@ -155,6 +155,14 @@ impl Engine {
     pub fn snapshot(&self, symbol: &Symbol) -> Result<trade_orderbook::BookSnapshot, CommandError> {
         self.books.snapshot(symbol)
     }
+
+    pub fn market_data_snapshot(
+        &self,
+        symbol: &Symbol,
+        depth: usize,
+    ) -> Result<trade_orderbook::MarketDataSnapshot, CommandError> {
+        self.books.market_data_snapshot(symbol, depth)
+    }
 }
 
 fn map_outcome(command_index: u64, outcome: CommandOutcome) -> Vec<EngineEvent> {
