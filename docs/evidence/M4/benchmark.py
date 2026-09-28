@@ -27,6 +27,7 @@ from pathlib import Path
 VERSION = "m4-http-ws-v2"
 SYMBOLS = ["A", "B", "C", "D"]
 PROTOCOL = "trade-rs.market-data.v1"
+MARKET_DATA_DEPTH = 20
 
 
 def command(symbol, order_id, kind="limit", quantity=1, price=0, owner=3):
@@ -73,9 +74,9 @@ class HttpConnection:
 
 
 class Subscriber:
-    def __init__(self, name, symbol, output, origin, warmup, duration, depth, expected_projection):
+    def __init__(self, name, symbol, output, origin, warmup, duration, expected_projection):
         self.name, self.symbol, self.origin = name, symbol, origin
-        self.warmup, self.duration, self.depth = warmup, duration, depth
+        self.warmup, self.duration = warmup, duration
         self.expected_projection = expected_projection
         self.path = output / f"{name}-frames.jsonl.gz"
         self.initial = asyncio.Event()
@@ -145,11 +146,12 @@ class Subscriber:
                     now = time.perf_counter() - self.origin
                     sequence = record["sequence"]
                     if self.previous is None:
-                        if (record.get("version") != 1 or record.get("type") != "l2_snapshot" or
+                        if (type(record.get("version")) is not int or record["version"] != 1 or
+                                record.get("type") != "l2_snapshot" or
                                 record.get("reason") != "initial" or record.get("symbol") != self.symbol or
-                                record.get("depth") != self.depth):
+                                type(record.get("depth")) is not int or record["depth"] != MARKET_DATA_DEPTH):
                             raise RuntimeError("first frame was not an initial L2 snapshot")
-                        if not isinstance(sequence, int) or sequence < 0:
+                        if type(sequence) is not int or sequence < 0:
                             raise RuntimeError("initial snapshot had an invalid sequence")
                         try:
                             stream_id = record["stream_id"]
@@ -247,11 +249,11 @@ def records_per_symbol(count):
     return sum((1, 1, 3, 1)[index % 4] for index in range(count))
 
 
-def l2_projection(book, depth):
+def l2_projection(book):
     def levels(side):
         return [{"price_ticks": level["price_ticks"],
                  "quantity": str(sum(order["remaining"] for order in level["orders"]))}
-                for level in side[:depth]]
+                for level in side[:MARKET_DATA_DEPTH]]
     return {"bids": levels(book["bids"]), "asks": levels(book["asks"])}
 
 
@@ -262,7 +264,7 @@ async def run(args):
     invocation = [binary, "--listen", "127.0.0.1:0", "--symbols", ",".join(SYMBOLS),
                   "--queue-capacity", str(args.queue), "--in-flight", str(args.in_flight),
                   "--connections", "1024", "--body-limit", "16384", "--market-data-ring-capacity", "1024",
-                  "--market-data-connections", "128", "--market-data-depth", str(args.market_data_depth)]
+                  "--market-data-connections", "128"]
     process = await asyncio.create_subprocess_exec(*invocation, stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE)
     clients, subscribers = [], []
@@ -296,8 +298,7 @@ async def run(args):
             assert sum(len(level["orders"]) for level in before[symbol]["bids"]) == pool * 2
         origin = time.perf_counter()
         subscribers = [Subscriber(f"subscriber-{index + 1:02d}", symbol, output, origin, args.warmup,
-                                  args.duration, args.market_data_depth,
-                                  l2_projection(before[symbol], args.market_data_depth))
+                                  args.duration, l2_projection(before[symbol]))
                        for index, symbol in enumerate(["A", "A", "B", "B", "C", "C", "D", "D"])]
         await asyncio.gather(*(subscriber.open(port) for subscriber in subscribers))
         free, samples, pending, cancels = deque(clients), [], set(), [0] * 4
@@ -357,6 +358,7 @@ async def run(args):
         metrics = json.loads(stdout.splitlines()[-1])
         measured = [sample for sample in samples if sample["phase"] == "measurement"]
         summary = aggregate(measured, args.duration)
+        warmup = aggregate(samples[:warm_count], args.warmup) if warm_count else None
         subscribers_summary = [subscriber.summary() for subscriber in subscribers]
         summary.update({"version": VERSION, "release_profile": "release", "server": metrics,
                         "websocket": {"healthy_subscribers": len(subscribers), "expected_live_frames_per_symbol": expected_live,
@@ -364,7 +366,7 @@ async def run(args):
                                       "resync_closes": sum(s["close_code"] == 1013 or s["close_reason"] == "resync_required" for s in subscribers_summary),
                                       "measurement_disconnects": sum(s["failure"] is not None for s in subscribers_summary),
                                       "post_measurement_client_closes": len(subscribers)},
-                        "warmup": aggregate(samples[:warm_count], args.warmup), "drained_seconds": drained_seconds,
+                        "warmup": warmup, "drained_seconds": drained_seconds,
                         "final_orders": {symbol: sum(len(level["orders"]) for level in after[symbol]["bids"] + after[symbol]["asks"]) for symbol in SYMBOLS},
                         "reconciliation": {"commands_admitted_minus_completed": metrics["commands_admitted"] - metrics["commands_completed"],
                                              "preload_commands": len(preload), "load_admitted": metrics["commands_admitted"] - len(preload),
@@ -415,9 +417,7 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=float, default=10)
     parser.add_argument("--queue", type=int, default=256)
     parser.add_argument("--in-flight", type=int, default=512)
-    parser.add_argument("--market-data-depth", type=int, default=20)
     args = parser.parse_args()
-    if min(args.rate, args.duration, args.clients, args.timeout, args.queue, args.in_flight,
-           args.market_data_depth) <= 0 or args.market_data_depth > 100 or args.warmup < 0:
+    if min(args.rate, args.duration, args.clients, args.timeout, args.queue, args.in_flight) <= 0 or args.warmup < 0:
         parser.error("positive values required; warmup may be zero")
     asyncio.run(run(args))
