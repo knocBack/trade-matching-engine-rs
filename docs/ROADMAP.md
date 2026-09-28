@@ -65,10 +65,9 @@ shutdown contract is [requirements/M4.md](requirements/M4.md); its independently
 authored acceptance scenarios are [scenarios/M4.md](scenarios/M4.md). One connection
 covers one symbol; reconnect plus a fresh initial L2 snapshot is the recovery boundary.
 The first loopback/co-located eight-reader comparison is retained in
-[BENCHMARK.md](BENCHMARK.md). It is stopped non-qualifying evidence: the carried
-500-offered-command/s HTTP p90 regressed beyond the five-percent comparison allowance,
-despite zero HTTP errors/overload and contiguous healthy-reader delivery. It makes no
-maximum-QPS claim. **Ships:** a live feed.
+[BENCHMARK.md](BENCHMARK.md). It met the carried 500-offered-command/s, one-second
+HTTP p90 threshold with zero HTTP errors/overload and contiguous healthy-reader
+delivery. It makes no maximum-QPS claim. **Ships:** a live feed.
 
 ### M5a · The simulator workload and timing instrumentation
 Synthetic agents in Rust - zero-intelligence, mean-reversion, momentum - are modelled

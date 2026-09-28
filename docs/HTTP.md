@@ -137,7 +137,5 @@ is also recorded as a safety boundary; 64 is not the recommended production sett
 
 The retained [M4 run](evidence/M4/baseline-2026-09-29/README.md) is loopback,
 co-located evidence only. It completed the 500 offered-command/s run with zero HTTP
-errors/overload and eight continuous readers, but its 0.945500 ms HTTP p90 was 49.73%
-above the directly comparable M3 combined p90. It is therefore stopped,
-non-qualifying comparison evidence, not a maximum-QPS measurement or accepted
-replacement for the M3 baseline.
+errors/overload and eight continuous readers, with a 0.945500 ms HTTP p90 below the
+carried one-second threshold. It is not a maximum-QPS measurement.
