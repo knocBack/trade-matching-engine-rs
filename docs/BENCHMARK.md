@@ -15,6 +15,10 @@ The rate is offered load, not an assertion that every offered request is accepte
 The definition deliberately does not mandate an order mix, warm-up duration,
 transport protocol, binary-heap identity, or a zero-rejection policy.
 
+Run benchmark captures with `RUST_LOG=trade_http=info` (or with `RUST_LOG` unset).
+This retains lifecycle and unusual-error diagnostics on stderr while avoiding
+debug/trace request and WebSocket-frame detail in the measured process.
+
 ## Exploratory probes
 
 M3 may separately label 100K-500K offered requests per second as

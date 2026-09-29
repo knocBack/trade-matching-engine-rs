@@ -6,6 +6,22 @@ then JSON reconciliation counters on exit. SIGINT or SIGTERM closes admission, d
 connected responses and joins the engine. Restart starts empty. A disconnected
 client cannot infer whether an admitted command completed; the adapter never retries.
 
+## Operational logging
+
+The two machine-readable JSON records on **stdout** are a stable benchmark protocol:
+the startup record is first and the final reconciliation counters are last. Operational
+logs are newline-delimited JSON on **stderr** and never share stdout, so benchmark
+parsing and HTTP/WebSocket behavior are unchanged.
+
+Logging uses `tracing`. With `RUST_LOG` unset, `trade-http` emits `info` lifecycle
+events (listen, drain, stop) and `warn`/`error` events for unusual failures. It does
+not log successful HTTP requests or WebSocket frames at that level. Set
+`RUST_LOG=trade_http=debug` to include bounded request-completion fields (`route`,
+`status`, and `overload`), or `RUST_LOG=trade_http=trace` to include bounded
+WebSocket disconnect reasons. Do not use debug or trace for baseline measurements:
+use `RUST_LOG=trade_http=info` (the default `trade-http` level) so request/frame
+logging remains disabled.
+
 The authoritative requirements and independent pre-implementation scenarios are
 [requirements/M3.md](requirements/M3.md) and [scenarios/M3.md](scenarios/M3.md).
 The schema references to an M2 amendment in the architecture are already fulfilled

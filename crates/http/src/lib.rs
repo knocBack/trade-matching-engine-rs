@@ -310,12 +310,15 @@ impl Handle {
         }
     }
     fn record(&self, route: &str, status: u16, overload: bool) {
-        let mut a = self.shared.admission.lock().unwrap();
-        *a.metrics
-            .requests
-            .entry(format!("{route}:{status}"))
-            .or_default() += 1;
-        a.metrics.overload += u64::from(overload);
+        {
+            let mut a = self.shared.admission.lock().unwrap();
+            *a.metrics
+                .requests
+                .entry(format!("{route}:{status}"))
+                .or_default() += 1;
+            a.metrics.overload += u64::from(overload);
+        }
+        tracing::debug!(route, status, overload, "request completed");
     }
     fn spawn_websocket<F>(&self, task: F)
     where
@@ -414,6 +417,7 @@ impl Handle {
             .or_default() += u64::try_from(bytes).unwrap_or(u64::MAX);
     }
     fn market_disconnected(&self, reason: &'static str) {
+        tracing::trace!(reason, "market-data client disconnected");
         *self
             .shared
             .admission
@@ -460,6 +464,12 @@ impl Server {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
         let listener = TcpListener::bind(config.listen).await?;
         let address = listener.local_addr()?;
+        tracing::info!(
+            listen = %address,
+            symbols = config.symbols.len(),
+            connections = config.connections,
+            "server listening"
+        );
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let (stop, _) = watch::channel(false);
         let (engine_exit, _) = watch::channel(EngineExit::Running);
@@ -523,6 +533,7 @@ impl Server {
                             .send_replace(EngineExit::Graceful);
                     }
                     Err(_) => {
+                        tracing::error!("engine owner thread panicked");
                         owner_handle
                             .shared
                             .admission
@@ -683,6 +694,7 @@ async fn serve(
     owner: thread::JoinHandle<()>,
     max_connections: usize,
 ) -> io::Result<Metrics> {
+    tracing::info!(max_connections, "server accepting connections");
     let connections = Arc::new(Semaphore::new(max_connections));
     let mut tasks = JoinSet::new();
     let mut stop = handle.shared.stop.subscribe();
@@ -696,7 +708,15 @@ async fn serve(
             _ = stop.changed() => break,
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {},
             accepted = listener.accept() => {
-                let (stream, _) = match accepted { Ok(v) => v, Err(e) => { failure = Some(e); handle.shutdown(); break; } };
+                let (stream, _) = match accepted {
+                    Ok(v) => v,
+                    Err(error) => {
+                        tracing::error!(error = %error, "TCP accept failed; shutting down server");
+                        failure = Some(error);
+                        handle.shutdown();
+                        break;
+                    }
+                };
                 let Ok(permit) = connections.clone().try_acquire_owned() else {
                     handle.shared.admission.lock().unwrap().metrics.connections_rejected += 1;
                     drop(stream);
@@ -730,12 +750,16 @@ async fn serve(
                             }
                         }
                     };
-                    if result.is_err() { h.shared.admission.lock().unwrap().metrics.connection_errors += 1; }
+                    if let Err(error) = result {
+                        h.shared.admission.lock().unwrap().metrics.connection_errors += 1;
+                        tracing::warn!(error = %error, "HTTP connection ended with an error");
+                    }
                 });
             }
         }
     }
     drop(listener);
+    tracing::info!("server stopping admission and draining work");
     handle.shutdown();
     while tasks.join_next().await.is_some() {}
     tokio::task::spawn_blocking(move || owner.join())
@@ -759,6 +783,7 @@ async fn serve(
     if let Some(error) = failure {
         return Err(error);
     }
+    tracing::info!("server shutdown complete");
     Ok(handle.metrics())
 }
 #[derive(Clone, Copy)]
@@ -1177,6 +1202,7 @@ async fn market_data_socket(
                     handle.market_frame_written(&symbol, kind, bytes);
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!(missed, "market-data client lagged and will disconnect");
                     {
                         let mut metrics = handle.shared.admission.lock().unwrap();
                         metrics.metrics.market_data_lag_disconnects += 1;
