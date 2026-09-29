@@ -196,7 +196,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-01-frames.jsonl.gz"
+        "raw_frames": "subscriber-01-frames.jsonl.gz"
       },
       {
         "name": "subscriber-02",
@@ -211,7 +211,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-02-frames.jsonl.gz"
+        "raw_frames": "subscriber-02-frames.jsonl.gz"
       },
       {
         "name": "subscriber-03",
@@ -226,7 +226,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-03-frames.jsonl.gz"
+        "raw_frames": "subscriber-03-frames.jsonl.gz"
       },
       {
         "name": "subscriber-04",
@@ -241,7 +241,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-04-frames.jsonl.gz"
+        "raw_frames": "subscriber-04-frames.jsonl.gz"
       },
       {
         "name": "subscriber-05",
@@ -256,7 +256,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-05-frames.jsonl.gz"
+        "raw_frames": "subscriber-05-frames.jsonl.gz"
       },
       {
         "name": "subscriber-06",
@@ -271,7 +271,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-06-frames.jsonl.gz"
+        "raw_frames": "subscriber-06-frames.jsonl.gz"
       },
       {
         "name": "subscriber-07",
@@ -286,7 +286,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-07-frames.jsonl.gz"
+        "raw_frames": "subscriber-07-frames.jsonl.gz"
       },
       {
         "name": "subscriber-08",
@@ -301,7 +301,7 @@
         "close_code": null,
         "close_reason": null,
         "failure": null,
-        "raw_frames": "docs/evidence/M4/baseline-2026-09-29/run-01/subscriber-08-frames.jsonl.gz"
+        "raw_frames": "subscriber-08-frames.jsonl.gz"
       }
     ],
     "resync_closes": 0,
@@ -361,8 +361,6 @@
     "load_http_200": 75000
   },
   "configuration": {
-    "server": "target/release/trade-http",
-    "output": "docs/evidence/M4/baseline-2026-09-29/run-01",
     "rate": 500,
     "warmup": 30.0,
     "duration": 120.0,
@@ -371,7 +369,7 @@
     "queue": 256,
     "in_flight": 512,
     "invocation": [
-      "/Users/prashanth/.treehouse/trade-rs-fc80db/6/trade-rs/target/release/trade-http",
+      "trade-http",
       "--listen",
       "127.0.0.1:0",
       "--symbols",
@@ -398,7 +396,7 @@
     "os": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
     "logical_cpus": 8,
     "commit": "617d510d91b8ef7742d8e293e9962313ad9947a0",
-    "git_status": "?? docs/evidence/M4/\n",
+    "git_worktree": "dirty",
     "rust": "rustc 1.87.0 (17067e9ac 2025-05-09)",
     "binary_sha256": "530b23bb3f1a5f7b2e1fc41b42740059d064f9e849aea57c6d8fbab1dd12a38d"
   },

@@ -167,6 +167,10 @@ class Subscriber:
                         self.previous = sequence
                         self.initial.set()
                     else:
+                        if (type(record.get("version")) is not int or record["version"] != 1 or
+                                type(sequence) is not int or sequence < 0 or
+                                record.get("type") not in {"trade", "bbo", "l2_snapshot"}):
+                            raise RuntimeError("live frame had invalid protocol fields")
                         if record.get("stream_id") != self.stream_id or record.get("symbol") != self.symbol:
                             raise RuntimeError("stream or symbol changed")
                         if sequence != self.previous + 1:
@@ -220,7 +224,7 @@ class Subscriber:
                 "live_frames": self.live_frames, "measurement_frames": self.measurement_frames,
                 "measurement_frame_rate": self.measurement_frames / self.duration, "stream_id": self.stream_id,
                 "close_code": self.close_code, "close_reason": self.close_reason, "failure": self.failure,
-                "raw_frames": str(self.path)}
+                "raw_frames": self.path.name}
 
 
 def aggregate(samples, seconds):
@@ -261,11 +265,11 @@ async def run(args):
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     binary = str(Path(args.server).resolve())
-    invocation = [binary, "--listen", "127.0.0.1:0", "--symbols", ",".join(SYMBOLS),
+    invocation = [Path(args.server).name, "--listen", "127.0.0.1:0", "--symbols", ",".join(SYMBOLS),
                   "--queue-capacity", str(args.queue), "--in-flight", str(args.in_flight),
                   "--connections", "1024", "--body-limit", "16384", "--market-data-ring-capacity", "1024",
                   "--market-data-connections", "128"]
-    process = await asyncio.create_subprocess_exec(*invocation, stdout=asyncio.subprocess.PIPE,
+    process = await asyncio.create_subprocess_exec(binary, *invocation[1:], stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE)
     clients, subscribers = [], []
     try:
@@ -360,6 +364,9 @@ async def run(args):
         summary = aggregate(measured, args.duration)
         warmup = aggregate(samples[:warm_count], args.warmup) if warm_count else None
         subscribers_summary = [subscriber.summary() for subscriber in subscribers]
+        git_worktree = "dirty" if subprocess.check_output(
+            ["git", "status", "--porcelain"], text=True
+        ).strip() else "clean"
         summary.update({"version": VERSION, "release_profile": "release", "server": metrics,
                         "websocket": {"healthy_subscribers": len(subscribers), "expected_live_frames_per_symbol": expected_live,
                                       "subscribers": subscribers_summary,
@@ -372,10 +379,14 @@ async def run(args):
                                              "preload_commands": len(preload), "load_admitted": metrics["commands_admitted"] - len(preload),
                                              "load_engine_completed": metrics["commands_completed"] - len(preload),
                                              "load_http_200": sum(sample["status"] == 200 for sample in samples)},
-                        "configuration": {**vars(args), "invocation": invocation, "pool_per_symbol": pool, "subscribers": "two healthy readers per A,B,C,D", "version": VERSION},
+                        "configuration": {"rate": args.rate, "warmup": args.warmup, "duration": args.duration,
+                                          "clients": args.clients, "timeout": args.timeout, "queue": args.queue,
+                                          "in_flight": args.in_flight, "invocation": invocation,
+                                          "pool_per_symbol": pool, "subscribers": "two healthy readers per A,B,C,D",
+                                          "version": VERSION},
                         "environment": {"python": platform.python_version(), "os": platform.platform(), "logical_cpus": os.cpu_count(),
                                         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                                        "git_status": subprocess.check_output(["git", "status", "--porcelain"], text=True),
+                                        "git_worktree": git_worktree,
                                         "rust": subprocess.check_output(["rustc", "--version"], text=True).strip(),
                                         "binary_sha256": hashlib.file_digest(open(binary, "rb"), "sha256").hexdigest()},
                         "runtime_notes": {"placement": "loopback, generator and server colocated on one host", "affinity": "not pinned", "debug_request_logging": False,
@@ -384,7 +395,10 @@ async def run(args):
             summary["completed"] == summary["offered"] and summary["http_200"] == summary["offered"] and summary["http_503"] == 0 and
             summary["domain_errors"] == 0 and summary["timeouts"] == 0 and summary["connection_errors"] == 0 and summary["generator_capacity"] == 0 and
             summary["http_wall_ms"]["p90"] <= 1000 and metrics["overload"] == 0 and summary["reconciliation"]["commands_admitted_minus_completed"] == 0 and
-            all(s["failure"] is None and s["live_frames"] == expected_live[s["symbol"]]
+            len({s["stream_id"] for s in subscribers_summary}) == 1 and
+            all(s["failure"] is None and s["live_frames"] == expected_live[s["symbol"]] and
+                s["initial_sequence"] + expected_live[s["symbol"]] == s["last_live_sequence"] ==
+                metrics["market_data_symbols"][s["symbol"]]["sequence"]
                 for s in subscribers_summary))
         (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
         print(json.dumps({"output": str(output), "gate_demonstrated": summary["gate_demonstrated"], "http_p90_ms": summary["http_wall_ms"]["p90"]}, indent=2), flush=True)
