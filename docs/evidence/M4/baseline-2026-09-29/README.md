@@ -74,9 +74,15 @@ outcome. `subscriber-01-frames.jsonl.gz` through `subscriber-08-frames.jsonl.gz`
 retain every decoded WebSocket application frame with its receive time. The preload
 and final snapshots plus the complete server stdout/stderr are retained alongside
 them. The retained run was captured by `../benchmark.py`, version `m4-http-ws-v1`.
-The current harness is version `m4-http-ws-v2`; it additionally validates each
-initial frame's protocol metadata and top-N projection against the captured pre-load
-book and bounds frame-rate counting to the configured measurement window.
+The current harness is version `m4-http-ws-v2`; it validates every initial frame's
+required metadata, non-boolean integer fields, and top-N projection against the
+captured pre-load book. It validates every live frame's version, non-boolean integer
+sequence, permitted type, selected symbol, shared stream ID, and continuity. Its gate
+also reconciles each reader's final sequence with the server's final per-symbol
+sequence and bounds frame-rate counting to the configured measurement window.
+Generated summaries retain a normalized binary name and arguments, binary hash,
+runtime details, and clean-or-dirty worktree state, without local paths or
+user-specific status entries.
 
 The environment was macOS 15.7.3 on an Apple M1 with eight logical CPUs and 16 GiB
 RAM. Generator and server were loopback/co-located and not CPU-pinned; power and
