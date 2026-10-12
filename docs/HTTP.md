@@ -125,3 +125,17 @@ and rejection fractions shown separately. The harness drains its dispatched task
 before final snapshots and SIGTERM; final server counters include preload and
 warmup, and the report subtracts preload explicitly. No debug per-request logging,
 affinity, container, proxy, TLS, persistence or external service is involved.
+
+## M4 measurement evidence
+
+`docs/evidence/M4/benchmark.py` extends the same fixture with eight promptly-reading
+standard-library WebSocket clients (two each for `A,B,C,D`) at the default 1,024-event
+ring capacity. It records every decoded frame, its receive time, initial/live sequence
+boundaries, continuity, close code/reason, resync, and disconnect outcome alongside
+the HTTP offers and final server counters. The focused ring-64 healthy-reader regression
+is also recorded as a safety boundary; 64 is not the recommended production setting.
+
+The retained [M4 run](evidence/M4/baseline-2026-09-29/README.md) is loopback,
+co-located evidence only. It completed the 500 offered-command/s run with zero HTTP
+errors/overload and eight continuous readers, with a 0.945500 ms HTTP p90 below the
+carried one-second threshold. It is not a maximum-QPS measurement.
